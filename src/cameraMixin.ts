@@ -4,7 +4,7 @@ import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import keyBy from "lodash/keyBy";
 import HikvisionVideoclipssProvider from "./main";
 import { HikvisionCameraAPI } from "./client";
-import { getOverlayKeys, getOverlay, getOverlaySettings, updateCameraConfigurationRegex, SupportedDevice } from "./utils";
+import { getOverlayKeys, getOverlay, getOverlaySettings, updateCameraConfigurationRegex, SupportedDevice, pluginEnabledFilter } from "./utils";
 
 export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any> implements Settings {
     client: HikvisionCameraAPI;
@@ -20,6 +20,13 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         getCurrentOverlayConfigurations: {
             title: 'Get current overlay configurations',
             type: 'button',
+        },
+        duplicateFromDevice: {
+            title: 'Duplicate from device',
+            description: 'Duplicate OSD information from another devices enabled on the plugin',
+            type: 'device',
+            deviceFilter: pluginEnabledFilter,
+            immediate: true,
         },
     });
 
@@ -75,6 +82,8 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
 
         if (key === 'getCurrentOverlayConfigurations') {
             await this.getOverlayData();
+        } else if (key === 'duplicateFromDevice') {
+            await this.duplicateFromDevice(value);
         } else if (updateCameraConfigurations) {
             const overlayId = updateCameraConfigurations[1];
             await this.updateOverlayData(overlayId);
@@ -99,6 +108,29 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         }
 
         this.overlayIds = overlayIds;
+    }
+
+    async duplicateFromDevice(deviceId: string) {
+        const deviceToDuplicate = this.plugin.mixinsMap[deviceId];
+
+        if (deviceToDuplicate) {
+            const duplicateClient = await deviceToDuplicate.getClient();
+            const { json: json } = await duplicateClient.getOverlay();
+
+            const client = await this.getClient();
+            await client.updateOverlay(json);
+            await this.getOverlayData();
+
+            for (const overlayId of deviceToDuplicate.overlayIds) {
+                const { device, isDevice, prefix, text } = getOverlay({ overlayId, storage: deviceToDuplicate.storageSettings });
+                const { deviceKey, enableDeviceKey, prefixKey, textKey } = getOverlayKeys(overlayId);
+
+                await this.putMixinSetting(deviceKey, device);
+                await this.putMixinSetting(enableDeviceKey, isDevice);
+                await this.putMixinSetting(prefixKey, prefix);
+                await this.putMixinSetting(textKey, text);
+            }
+        }
     }
 
     async updateOverlayData(overlayId: string) {

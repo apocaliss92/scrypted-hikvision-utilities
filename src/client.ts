@@ -46,6 +46,21 @@ export class HikvisionCameraAPI {
         return { json, xml: response.body };
     }
 
+    async updateOverlay(entry: VideoOverlayRoot) {
+        const builder = new xml2js.Builder();
+        const xml = builder.buildObject(entry);
+
+        await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/System/Video/inputs/channels/1/overlays`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+            body: xml
+        });
+    }
+
     async getOverlayText(overlayId: string) {
         const response = await this.request({
             method: 'GET',

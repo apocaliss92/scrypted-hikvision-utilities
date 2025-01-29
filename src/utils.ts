@@ -1,9 +1,10 @@
 import { ScryptedDeviceType, Setting, Thermometer } from "@scrypted/sdk";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 
-export const deviceFilter = `type === '${ScryptedDeviceType.Thermostat}'`;
 export const updateCameraConfigurationRegex = new RegExp('overlay:(.*):update');
 export const HIKVISION_UTILITIES_INTERFACE = `HIKVISION_UTILITIES`;
+export const deviceFilter = `type === '${ScryptedDeviceType.Thermostat}'`;
+export const pluginEnabledFilter = `interfaces.includes('${HIKVISION_UTILITIES_INTERFACE}')`;
 
 export type SupportedDevice = Thermometer;
 
@@ -71,7 +72,7 @@ export const getOverlaySettings = (props: {
                     title: 'Device',
                     type: 'device',
                     subgroup: overlayName,
-                    deviceFilter: deviceFilter,
+                    deviceFilter,
                     immediate: true,
                     value: storage.getItem(deviceKey)
                 },
