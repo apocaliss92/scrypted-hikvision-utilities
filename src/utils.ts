@@ -1,30 +1,35 @@
-import { ScryptedDeviceType, Setting, Thermometer } from "@scrypted/sdk";
+import { HumiditySensor, ScryptedDeviceBase, ScryptedInterface, Setting, Thermometer } from "@scrypted/sdk";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 
 export const updateCameraConfigurationRegex = new RegExp('overlay:(.*):update');
 export const HIKVISION_UTILITIES_INTERFACE = `HIKVISION_UTILITIES`;
-export const deviceFilter = `type === '${ScryptedDeviceType.Thermostat}'`;
+export const deviceFilter = `['${ScryptedInterface.Thermometer}','${ScryptedInterface.HumiditySensor}'].some(elem => interfaces.includes(elem))`;
 export const pluginEnabledFilter = `interfaces.includes('${HIKVISION_UTILITIES_INTERFACE}')`;
 
-export type SupportedDevice = Thermometer;
+export type SupportedDevice = ScryptedDeviceBase & (Thermometer | HumiditySensor);
+export enum OverlayType {
+    Text = 'Text',
+    Device = 'Device',
+    FaceDetection = 'FaceDetection',
+}
 
 interface Overlay {
     text: string;
-    isDevice: boolean;
+    type: OverlayType;
     device: string;
     prefix: string;
 }
 
 export const getOverlayKeys = (overlayId: string) => {
     const textKey = `overlay:${overlayId}:text`;
-    const enableDeviceKey = `overlay:${overlayId}:useDevice`;
+    const typeKey = `overlay:${overlayId}:type`;
     const prefixKey = `overlay:${overlayId}:prefix`;
     const deviceKey = `overlay:${overlayId}:device`;
     const updateKey = `overlay:${overlayId}:update`;
 
     return {
         textKey,
-        enableDeviceKey,
+        typeKey,
         prefixKey,
         deviceKey,
         updateKey,
@@ -41,9 +46,9 @@ export const getOverlaySettings = (props: {
     for (const overlayId of overlayIds) {
         const overlayName = `Overlay ${overlayId}`;
 
-        const { deviceKey, enableDeviceKey, prefixKey, textKey, updateKey } = getOverlayKeys(overlayId);
+        const { deviceKey, typeKey, prefixKey, textKey, updateKey } = getOverlayKeys(overlayId);
 
-        const isDevice = JSON.parse(storage.getItem(enableDeviceKey as any) as string ?? 'false');
+        const type = storage.getItem(typeKey) ?? OverlayType.Text;
 
         settings.push(
             {
@@ -52,20 +57,28 @@ export const getOverlaySettings = (props: {
                 type: 'string',
                 subgroup: overlayName,
                 value: storage.getItem(textKey),
-                readonly: isDevice,
+                readonly: type !== OverlayType.Text,
             },
             {
-                key: enableDeviceKey,
-                title: 'Use device value',
-                description: 'Text will depend on the device selected',
-                type: 'boolean',
+                key: typeKey,
+                title: 'Overlay type',
+                type: 'string',
+                choices: [OverlayType.Text, OverlayType.Device, OverlayType.FaceDetection],
                 subgroup: overlayName,
-                value: isDevice,
+                value: type,
                 immediate: true,
             }
         );
 
-        if (isDevice) {
+        const prefixSetting: Setting = {
+            key: prefixKey,
+            title: 'Value prefix',
+            type: 'string',
+            subgroup: overlayName,
+            value: storage.getItem(prefixKey),
+        };
+
+        if (type === OverlayType.Device) {
             settings.push(
                 {
                     key: deviceKey,
@@ -76,14 +89,10 @@ export const getOverlaySettings = (props: {
                     immediate: true,
                     value: storage.getItem(deviceKey)
                 },
-                {
-                    key: prefixKey,
-                    title: 'Value prefix',
-                    type: 'string',
-                    subgroup: overlayName,
-                    value: storage.getItem(prefixKey),
-                },
+                prefixSetting
             );
+        } else if (type === OverlayType.FaceDetection) {
+            settings.push(prefixSetting);
         }
 
         settings.push({
@@ -100,20 +109,19 @@ export const getOverlaySettings = (props: {
 export const getOverlay = (props: {
     storage: StorageSettings<any>,
     overlayId: string
-
-}) => {
+}): Overlay => {
     const { storage, overlayId } = props;
 
-    const { deviceKey, enableDeviceKey, prefixKey, textKey } = getOverlayKeys(overlayId);
+    const { deviceKey, typeKey, prefixKey, textKey } = getOverlayKeys(overlayId);
 
-    const isDevice = JSON.parse(storage.getItem(enableDeviceKey as any) as string ?? 'false');
+    const type = storage.getItem(typeKey) ?? OverlayType.Text;
     const device = storage.getItem(deviceKey);
     const text = storage.getItem(textKey);
     const prefix = storage.getItem(prefixKey);
 
     return {
         device,
-        isDevice,
+        type,
         prefix,
         text
     };

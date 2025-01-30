@@ -5,12 +5,6 @@ import { HIKVISION_UTILITIES_INTERFACE } from "./utils";
 
 export default class HikvisionUtilitiesProvider extends ScryptedDeviceBase implements MixinProvider {
     storageSettings = new StorageSettings(this, {
-        temperatureUnit: {
-            title: 'Temperature unit',
-            type: 'string',
-            choices: ['°C', '°F'],
-            defaultValue: '°C'
-        }
     });
     public mixinsMap: Record<string, HikvisionUtilitiesMixin> = {};
 

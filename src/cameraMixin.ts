@@ -1,15 +1,17 @@
-import sdk, { ScryptedDeviceType, Setting, Settings } from "@scrypted/sdk";
+import sdk, { EventListenerRegister, ObjectsDetected, ScryptedDeviceType, ScryptedInterface, Setting, Settings } from "@scrypted/sdk";
 import { SettingsMixinDeviceBase, SettingsMixinDeviceOptions } from "@scrypted/sdk/settings-mixin";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import keyBy from "lodash/keyBy";
 import HikvisionVideoclipssProvider from "./main";
 import { HikvisionCameraAPI } from "./client";
-import { getOverlayKeys, getOverlay, getOverlaySettings, updateCameraConfigurationRegex, SupportedDevice, pluginEnabledFilter } from "./utils";
+import { getOverlayKeys, getOverlay, getOverlaySettings, updateCameraConfigurationRegex, SupportedDevice, pluginEnabledFilter, OverlayType } from "./utils";
 
 export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any> implements Settings {
     client: HikvisionCameraAPI;
     killed: boolean;
     overlayIds: string[] = [];
+    lastFaceDetected: string;
+    detectionListener: EventListenerRegister;
 
     storageSettings = new StorageSettings(this, {
         updateInterval: {
@@ -97,14 +99,13 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         const { json: currentOverlay } = await client.getOverlay();
         const overlayIds: string[] = [];
 
-        const overlayEntries = currentOverlay.VideoOverlay.TextOverlayList;
+        const overlayEntries = currentOverlay.VideoOverlay.TextOverlayList?.[0]?.TextOverlay;
+        this.console.log(JSON.stringify(overlayEntries));
         for (const overlayEntry of overlayEntries) {
-            if (overlayEntry.TextOverlay) {
-                const id = overlayEntry.TextOverlay[0]?.id?.[0];
-                overlayIds.push(id);
-                const { textKey } = getOverlayKeys(id);
-                this.storageSettings.putSetting(textKey, overlayEntry.TextOverlay[0]?.displayText?.[0]);
-            }
+            const id = overlayEntry.id?.[0];
+            overlayIds.push(id);
+            const { textKey } = getOverlayKeys(id);
+            this.storageSettings.putSetting(textKey, overlayEntry.displayText?.[0]);
         }
 
         this.overlayIds = overlayIds;
@@ -122,11 +123,11 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
             await this.getOverlayData();
 
             for (const overlayId of deviceToDuplicate.overlayIds) {
-                const { device, isDevice, prefix, text } = getOverlay({ overlayId, storage: deviceToDuplicate.storageSettings });
-                const { deviceKey, enableDeviceKey, prefixKey, textKey } = getOverlayKeys(overlayId);
+                const { device, type, prefix, text } = getOverlay({ overlayId, storage: deviceToDuplicate.storageSettings });
+                const { deviceKey, typeKey, prefixKey, textKey } = getOverlayKeys(overlayId);
 
                 await this.putMixinSetting(deviceKey, device);
-                await this.putMixinSetting(enableDeviceKey, isDevice);
+                await this.putMixinSetting(typeKey, type);
                 await this.putMixinSetting(prefixKey, prefix);
                 await this.putMixinSetting(textKey, text);
             }
@@ -137,15 +138,20 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         const client = await this.getClient();
         const { json: currentContent } = await client.getOverlayText(overlayId);
 
-        const { device, isDevice, prefix, text } = getOverlay({ overlayId, storage: this.storageSettings });
+        const { device, type, prefix, text } = getOverlay({ overlayId, storage: this.storageSettings });
 
         let textToUpdate = text;
-        if (isDevice && device) {
+        if (type === OverlayType.Device && device) {
             const realDevice = sdk.systemManager.getDeviceById<SupportedDevice>(device);
-
-            if (realDevice.type === ScryptedDeviceType.Thermostat) {
-                textToUpdate = `${prefix || ''}${realDevice.temperature} ${this.plugin.storageSettings.values.temperatureUnit}`;
+            if (realDevice) {
+                if (realDevice.interfaces.includes(ScryptedInterface.Thermometer)) {
+                    textToUpdate = `${prefix || ''}${realDevice.temperature} ${realDevice.temperatureUnit}`;
+                } else if (realDevice.interfaces.includes(ScryptedInterface.HumiditySensor)) {
+                    textToUpdate = `${prefix || ''}${realDevice.humidity} %`;
+                }
             }
+        } else if (type === OverlayType.FaceDetection) {
+            textToUpdate = `${prefix || ''}${this.lastFaceDetected || '-'}`;
         }
 
         currentContent.TextOverlay.displayText = [textToUpdate];
@@ -153,19 +159,52 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         await client.updateOverlayText(overlayId, currentContent);
     }
 
+    checkEventListeners(props: {
+        faceEnabled: boolean
+    }) {
+        const { faceEnabled } = props;
+
+        if (faceEnabled) {
+            if (!this.detectionListener) {
+                this.console.log('Starting Object detection for faces');
+                this.detectionListener = sdk.systemManager.listenDevice(this.id, ScryptedInterface.ObjectDetector, async (_, __, data) => {
+                    const detection: ObjectsDetected = data;
+
+                    const faceLabel = detection.detections.find(det => det.className === 'face' && det.label)?.label;
+                    if (faceLabel) {
+                        this.console.log(`Face detected: ${faceLabel}`);
+                        this.lastFaceDetected = faceLabel;
+                    }
+                });
+            }
+        } else if (this.detectionListener) {
+            this.console.log('Stopping Object detection for faces');
+            this.detectionListener && this.detectionListener.removeListener();
+            this.detectionListener = undefined;
+        }
+    }
+
     async init() {
         await this.getOverlayData();
 
         setInterval(async () => {
+            let faceEnabled = false;
             for (const overlayId of this.overlayIds) {
                 const overlay = getOverlay({
                     overlayId,
                     storage: this.storageSettings
                 });
-                if (overlay.isDevice && overlay.device) {
+
+                if (overlay.type !== OverlayType.Text) {
                     await this.updateOverlayData(overlayId);
                 }
+
+                if (overlay.type === OverlayType.FaceDetection) {
+                    faceEnabled = true;
+                }
             }
+
+            this.checkEventListeners({ faceEnabled });
         }, this.storageSettings.values.updateInterval * 1000);
     }
 }
