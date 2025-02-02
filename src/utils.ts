@@ -1,4 +1,4 @@
-import { HumiditySensor, ScryptedDeviceBase, ScryptedInterface, Setting, Thermometer } from "@scrypted/sdk";
+import sdk, { EventListenerRegister, HumiditySensor, ObjectsDetected, ScryptedDeviceBase, ScryptedInterface, Setting, Thermometer } from "@scrypted/sdk";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 
 export const HIKVISION_UTILITIES_INTERFACE = `HIKVISION_UTILITIES`;
@@ -18,6 +18,22 @@ interface Overlay {
     device: string;
     prefix: string;
 }
+
+export enum ListenerType {
+    Face = 'Face',
+    Humidity = 'Humidity',
+    Temperature = 'Temperature',
+}
+
+export type ListenersMap = Record<string, { listenerType: ListenerType, listener: EventListenerRegister, device?: string }>;
+
+export type OnUpdateOverlayFn = (props: {
+    overlayId: string,
+    listenerType: ListenerType,
+    listenInterface: ScryptedInterface,
+    data?: any,
+    device: ScryptedDeviceBase
+}) => Promise<void>
 
 export const getOverlayKeys = (overlayId: string) => {
     const textKey = `overlay:${overlayId}:text`;
@@ -115,4 +131,95 @@ export const getOverlay = (props: {
         prefix,
         text
     };
+}
+
+export const listenersIntevalFn = (props: {
+    overlayIds: string[],
+    storage: StorageSettings<any>,
+    console: Console,
+    id: string,
+    currentListeners: ListenersMap,
+    onUpdateFn: OnUpdateOverlayFn,
+}) => {
+    const { overlayIds, storage, console, id, currentListeners, onUpdateFn } = props;
+
+    for (const overlayId of overlayIds) {
+        const overlay = getOverlay({
+            overlayId,
+            storage
+        });
+
+        const overlayType = overlay.type;
+        let listenerType: ListenerType;
+        let listenInterface: ScryptedInterface;
+        let deviceId: string;
+        if (overlayType === OverlayType.Device) {
+            const realDevice = sdk.systemManager.getDeviceById(overlay.device);
+            if (realDevice) {
+                if (realDevice.interfaces.includes(ScryptedInterface.Thermometer)) {
+                    listenerType = ListenerType.Temperature;
+                    listenInterface = ScryptedInterface.Thermometer;
+                    deviceId = overlay.device;
+                } else if (realDevice.interfaces.includes(ScryptedInterface.HumiditySensor)) {
+                    listenerType = ListenerType.Humidity;
+                    listenInterface = ScryptedInterface.HumiditySensor;
+                    deviceId = overlay.device;
+                }
+            } else {
+                console.log(`Device ${overlay.device} not found`);
+            }
+        } else if (overlayType === OverlayType.FaceDetection) {
+            listenerType = ListenerType.Face;
+            listenInterface = ScryptedInterface.ObjectDetection;
+            deviceId = id;
+        }
+
+        const currentListener = currentListeners[overlayId];
+        const currentDevice = currentListener?.device;
+        const differentType = (!currentListener || currentListener.listenerType !== listenerType);
+        const differentDevice = overlay.type === OverlayType.Device ? currentDevice !== overlay.device : false;
+        if (listenerType && listenInterface && deviceId && (differentType || differentDevice)) {
+            const realDevice = sdk.systemManager.getDeviceById<ScryptedDeviceBase>(deviceId);
+            console.log(`Overlay ${overlayId}: starting device ${realDevice.name} listener for type ${listenerType} on interface ${listenInterface}`);
+            currentListener?.listener && currentListener.listener.removeListener();
+            const newListener = realDevice.listen(listenInterface, async (_, __, data) => {
+                await onUpdateFn({
+                    listenInterface,
+                    overlayId,
+                    data,
+                    listenerType,
+                    device: realDevice
+                });
+            });
+
+            currentListeners[overlayId] = {
+                listenerType,
+                device: overlay.device,
+                listener: newListener
+            };
+        }
+    }
+}
+
+export const parseOverlayData = (props: {
+    listenerType: ListenerType,
+    data: any,
+    overlay: Overlay,
+    parseNumber?: (input: number) => string
+}) => {
+    const { listenerType, data, overlay, parseNumber } = props;
+    const { prefix, text, device } = overlay;
+    const realDevice = device ? sdk.systemManager.getDeviceById<SupportedDevice>(device) : undefined;
+
+    let textToUpdate = text;
+    if (listenerType === ListenerType.Face) {
+        const label = (data as ObjectsDetected)?.detections?.find(det => det.className === 'face')?.label;
+        textToUpdate = label;
+    } else if (listenerType === ListenerType.Temperature) {
+        textToUpdate = `${prefix || ''}${parseNumber ? parseNumber(data) : data} ${realDevice.temperatureUnit}`;
+    } else if (listenerType === ListenerType.Humidity) {
+        textToUpdate = `${prefix || ''}${parseNumber ? parseNumber(data) : data} %`;
+    }
+
+    return textToUpdate;
 }

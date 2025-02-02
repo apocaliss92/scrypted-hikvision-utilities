@@ -170,7 +170,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         try {
             const funct = async () => {
                 try {
-                    this.listenersMap = listenersIntevalFn({
+                    listenersIntevalFn({
                         console: this.console,
                         currentListeners: this.listenersMap,
                         id: this.id,
