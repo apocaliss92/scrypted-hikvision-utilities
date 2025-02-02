@@ -1,7 +1,7 @@
-import { DeviceBase, MixinProvider, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, Setting, SettingValue, WritableDeviceState } from "@scrypted/sdk";
+import sdk, { DeviceBase, MixinProvider, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, Setting, SettingValue, WritableDeviceState } from "@scrypted/sdk";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import HikvisionUtilitiesMixin from "./cameraMixin";
-import { HIKVISION_UTILITIES_INTERFACE } from "./utils";
+import { HIKVISION_UTILITIES_INTERFACE, OverlayType } from "./utils";
 
 export default class HikvisionUtilitiesProvider extends ScryptedDeviceBase implements MixinProvider {
     storageSettings = new StorageSettings(this, {

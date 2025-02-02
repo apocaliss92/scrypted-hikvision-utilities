@@ -1,7 +1,6 @@
 import { HumiditySensor, ScryptedDeviceBase, ScryptedInterface, Setting, Thermometer } from "@scrypted/sdk";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 
-export const updateCameraConfigurationRegex = new RegExp('overlay:(.*):update');
 export const HIKVISION_UTILITIES_INTERFACE = `HIKVISION_UTILITIES`;
 export const deviceFilter = `['${ScryptedInterface.Thermometer}','${ScryptedInterface.HumiditySensor}'].some(elem => interfaces.includes(elem))`;
 export const pluginEnabledFilter = `interfaces.includes('${HIKVISION_UTILITIES_INTERFACE}')`;
@@ -25,14 +24,12 @@ export const getOverlayKeys = (overlayId: string) => {
     const typeKey = `overlay:${overlayId}:type`;
     const prefixKey = `overlay:${overlayId}:prefix`;
     const deviceKey = `overlay:${overlayId}:device`;
-    const updateKey = `overlay:${overlayId}:update`;
 
     return {
         textKey,
         typeKey,
         prefixKey,
         deviceKey,
-        updateKey,
     }
 }
 
@@ -46,7 +43,7 @@ export const getOverlaySettings = (props: {
     for (const overlayId of overlayIds) {
         const overlayName = `Overlay ${overlayId}`;
 
-        const { deviceKey, typeKey, prefixKey, textKey, updateKey } = getOverlayKeys(overlayId);
+        const { deviceKey, typeKey, prefixKey, textKey } = getOverlayKeys(overlayId);
 
         const type = storage.getItem(typeKey) ?? OverlayType.Text;
 
@@ -94,13 +91,6 @@ export const getOverlaySettings = (props: {
         } else if (type === OverlayType.FaceDetection) {
             settings.push(prefixSetting);
         }
-
-        settings.push({
-            key: updateKey,
-            type: 'button',
-            title: 'Update configuration',
-            subgroup: overlayName,
-        });
     }
 
     return settings;
