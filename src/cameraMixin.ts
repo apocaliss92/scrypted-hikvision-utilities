@@ -1,29 +1,19 @@
-import sdk, { EventListenerRegister, ObjectsDetected, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, Setting, Settings } from "@scrypted/sdk";
+import sdk, { ObjectsDetected, ScryptedDeviceBase, ScryptedInterface, Setting, Settings } from "@scrypted/sdk";
 import { SettingsMixinDeviceBase, SettingsMixinDeviceOptions } from "@scrypted/sdk/settings-mixin";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import keyBy from "lodash/keyBy";
 import HikvisionVideoclipssProvider from "./main";
 import { HikvisionCameraAPI } from "./client";
-import { getOverlayKeys, getOverlay, getOverlaySettings, SupportedDevice, pluginEnabledFilter, OverlayType } from "./utils";
-
-enum ListenerType {
-    Face = 'Face',
-    Humidity = 'Humidity',
-    Temperature = 'Temperature',
-}
+import { getOverlayKeys, getOverlay, getOverlaySettings, SupportedDevice, pluginEnabledFilter, OverlayType, ListenerType, ListenersMap, OnUpdateOverlayFn, listenersIntevalFn, parseOverlayData } from "./utils";
 
 export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any> implements Settings {
     client: HikvisionCameraAPI;
     killed: boolean;
     overlayIds: string[] = [];
-    listenersMap: Record<string, { listenerType: ListenerType, listener: EventListenerRegister, device?: string }> = {};
+    listenersMap: ListenersMap = {};
     checkInterval: NodeJS.Timeout;
 
     storageSettings = new StorageSettings(this, {
-        getCurrentOverlayConfigurations: {
-            title: 'Get current overlay configurations',
-            type: 'button',
-        },
         duplicateFromDevice: {
             title: 'Duplicate from device',
             description: 'Duplicate OSD information from another devices enabled on the plugin',
@@ -92,9 +82,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     }
 
     async putMixinSetting(key: string, value: string) {
-        if (key === 'getCurrentOverlayConfigurations') {
-            await this.getOverlayData();
-        } else if (key === 'duplicateFromDevice') {
+        if (key === 'duplicateFromDevice') {
             await this.duplicateFromDevice(value);
         } else {
             this.storage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
@@ -148,13 +136,13 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         }
     }
 
-    async updateOverlayData(props: {
+    private updateOverlayData: OnUpdateOverlayFn = async (props: {
         overlayId: string,
         listenerType: ListenerType,
         listenInterface: ScryptedInterface,
         data?: any,
         device: ScryptedDeviceBase
-    }) {
+    }) => {
         const { overlayId, listenerType, data, device } = props;
         this.console.log(`Update received from device ${device.name} ${JSON.stringify({
             overlayId,
@@ -166,22 +154,11 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
             const client = await this.getClient();
             const { json: currentContent } = await client.getOverlayText(overlayId);
 
-            const { device, prefix, text } = getOverlay({ overlayId, storage: this.storageSettings });
-            const realDevice = device ? sdk.systemManager.getDeviceById<SupportedDevice>(device) : undefined;
-
-            let textToUpdate = text;
-            if (listenerType === ListenerType.Face) {
-                const label = (data as ObjectsDetected)?.detections?.find(det => det.className === 'face')?.label;
-                textToUpdate = label;
-            } else if (listenerType === ListenerType.Temperature) {
-                textToUpdate = `${prefix || ''}${data} ${realDevice.temperatureUnit}`;
-            } else if (listenerType === ListenerType.Humidity) {
-                textToUpdate = `${prefix || ''}${data} %`;
-            }
+            const overlay = getOverlay({ overlayId, storage: this.storageSettings });
+            const textToUpdate = parseOverlayData({ data, listenerType, overlay });
 
             if (textToUpdate) {
                 currentContent.TextOverlay.displayText = [textToUpdate];
-
                 await client.updateOverlayText(overlayId, currentContent);
             }
         } catch (e) {
@@ -191,69 +168,25 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
 
     async init() {
         try {
-            await this.getOverlayData();
-
-            this.checkInterval = setInterval(() => {
+            const funct = async () => {
                 try {
-                    for (const overlayId of this.overlayIds) {
-                        const overlay = getOverlay({
-                            overlayId,
-                            storage: this.storageSettings
-                        });
-
-                        const overlayType = overlay.type;
-                        let listenerType: ListenerType;
-                        let listenInterface: ScryptedInterface;
-                        let deviceId: string;
-                        if (overlayType === OverlayType.Device) {
-                            const realDevice = sdk.systemManager.getDeviceById(overlay.device);
-                            if (realDevice) {
-                                if (realDevice.interfaces.includes(ScryptedInterface.Thermometer)) {
-                                    listenerType = ListenerType.Temperature;
-                                    listenInterface = ScryptedInterface.Thermometer;
-                                    deviceId = overlay.device;
-                                } else if (realDevice.interfaces.includes(ScryptedInterface.HumiditySensor)) {
-                                    listenerType = ListenerType.Humidity;
-                                    listenInterface = ScryptedInterface.HumiditySensor;
-                                    deviceId = overlay.device;
-                                }
-                            } else {
-                                this.console.log(`Device ${overlay.device} not found`);
-                            }
-                        } else if (overlayType === OverlayType.FaceDetection) {
-                            listenerType = ListenerType.Face;
-                            listenInterface = ScryptedInterface.ObjectDetection;
-                            deviceId = this.id;
-                        }
-
-                        const currentListener = this.listenersMap[overlayId];
-                        const currentDevice = currentListener?.device;
-                        const differentType = (!currentListener || currentListener.listenerType !== listenerType);
-                        const differentDevice = overlay.type === OverlayType.Device ? currentDevice !== overlay.device : false;
-                        if (listenerType && listenInterface && deviceId && (differentType || differentDevice)) {
-                            const realDevice = sdk.systemManager.getDeviceById<ScryptedDeviceBase>(deviceId);
-                            this.console.log(`Overlay ${overlayId}: starting device ${realDevice.name} listener for type ${listenerType} on interface ${listenInterface}`);
-                            currentListener?.listener && currentListener.listener.removeListener();
-                            this.listenersMap[overlayId] = {
-                                listenerType,
-                                device: overlay.device,
-                                listener: realDevice.listen(listenInterface, (_, __, data) => {
-                                    this.updateOverlayData({
-                                        listenInterface,
-                                        overlayId,
-                                        data,
-                                        listenerType,
-                                        device: realDevice
-                                    }).catch(this.console.error);
-                                })
-                            }
-                        }
-                    }
+                    this.listenersMap = listenersIntevalFn({
+                        console: this.console,
+                        currentListeners: this.listenersMap,
+                        id: this.id,
+                        onUpdateFn: this.updateOverlayData,
+                        overlayIds: this.overlayIds,
+                        storage: this.storageSettings
+                    });
+                    await this.getOverlayData();
                 } catch (e) {
                     this.console.error('Error in init interval', e);
                 }
 
-            }, 10 * 1000);
+            };
+
+            this.checkInterval = setInterval(funct, 10 * 1000);
+            await funct();
         } catch (e) {
             this.console.error('Error in init', e);
         }
