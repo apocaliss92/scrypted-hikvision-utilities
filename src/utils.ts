@@ -30,9 +30,9 @@ export type ListenersMap = Record<string, { listenerType: ListenerType, listener
 export type OnUpdateOverlayFn = (props: {
     overlayId: string,
     listenerType: ListenerType,
-    listenInterface: ScryptedInterface,
-    data?: any,
-    device: ScryptedDeviceBase
+    listenInterface?: ScryptedInterface,
+    data: any,
+    device?: ScryptedDeviceBase
 }) => Promise<void>
 
 export const getOverlayKeys = (overlayId: string) => {
@@ -65,14 +65,6 @@ export const getOverlaySettings = (props: {
 
         settings.push(
             {
-                key: textKey,
-                title: 'Text',
-                type: 'string',
-                subgroup: overlayName,
-                value: storage.getItem(textKey),
-                readonly: type !== OverlayType.Text,
-            },
-            {
                 key: typeKey,
                 title: 'Overlay type',
                 type: 'string',
@@ -82,6 +74,16 @@ export const getOverlaySettings = (props: {
                 immediate: true,
             }
         );
+
+        if (type === OverlayType.Text) {
+            settings.push({
+                key: textKey,
+                title: 'Text',
+                type: 'string',
+                subgroup: overlayName,
+                value: storage.getItem(textKey),
+            })
+        };
 
         const prefixSetting: Setting = {
             key: prefixKey,
@@ -178,25 +180,34 @@ export const listenersIntevalFn = (props: {
         const currentDevice = currentListener?.device;
         const differentType = (!currentListener || currentListener.listenerType !== listenerType);
         const differentDevice = overlay.type === OverlayType.Device ? currentDevice !== overlay.device : false;
-        if (listenerType && listenInterface && deviceId && (differentType || differentDevice)) {
-            const realDevice = sdk.systemManager.getDeviceById<ScryptedDeviceBase>(deviceId);
-            console.log(`Overlay ${overlayId}: starting device ${realDevice.name} listener for type ${listenerType} on interface ${listenInterface}`);
-            currentListener?.listener && currentListener.listener.removeListener();
-            const newListener = realDevice.listen(listenInterface, async (_, __, data) => {
-                await onUpdateFn({
-                    listenInterface,
-                    overlayId,
-                    data,
-                    listenerType,
-                    device: realDevice
+        if (listenerType) {
+            if (listenInterface && deviceId && (differentType || differentDevice)) {
+                const realDevice = sdk.systemManager.getDeviceById<ScryptedDeviceBase>(deviceId);
+                console.log(`Overlay ${overlayId}: starting device ${realDevice.name} listener for type ${listenerType} on interface ${listenInterface}`);
+                currentListener?.listener && currentListener.listener.removeListener();
+                const newListener = realDevice.listen(listenInterface, async (_, __, data) => {
+                    await onUpdateFn({
+                        listenInterface,
+                        overlayId,
+                        data,
+                        listenerType,
+                        device: realDevice
+                    });
                 });
-            });
 
-            currentListeners[overlayId] = {
+                currentListeners[overlayId] = {
+                    listenerType,
+                    device: overlay.device,
+                    listener: newListener
+                };
+            }
+        } else if (overlayType === OverlayType.Text) {
+            currentListener?.listener && currentListener.listener.removeListener();
+            onUpdateFn({
+                overlayId,
                 listenerType,
-                device: overlay.device,
-                listener: newListener
-            };
+                data: overlay.text,
+            });
         }
     }
 }
