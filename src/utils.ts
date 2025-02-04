@@ -32,7 +32,8 @@ export type OnUpdateOverlayFn = (props: {
     listenerType: ListenerType,
     listenInterface?: ScryptedInterface,
     data: any,
-    device?: ScryptedDeviceBase
+    device?: ScryptedDeviceBase,
+    noLog?: boolean,
 }) => Promise<void>
 
 export const getOverlayKeys = (overlayId: string) => {
@@ -207,6 +208,7 @@ export const listenersIntevalFn = (props: {
                 overlayId,
                 listenerType,
                 data: overlay.text,
+                noLog: true
             });
         }
     }

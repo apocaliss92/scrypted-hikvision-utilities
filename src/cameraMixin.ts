@@ -136,12 +136,14 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     }
 
     private updateOverlayData: OnUpdateOverlayFn = async (props) => {
-        const { overlayId, listenerType, data, device } = props;
-        this.console.log(`Update received from device ${device?.name} ${JSON.stringify({
-            overlayId,
-            listenerType,
-            data
-        })}`);
+        const { overlayId, listenerType, data, device, noLog } = props;
+        if (!noLog) {
+            this.console.log(`Update received from device ${device?.name} ${JSON.stringify({
+                overlayId,
+                listenerType,
+                data
+            })}`);
+        }
 
         try {
             const client = await this.getClient();
