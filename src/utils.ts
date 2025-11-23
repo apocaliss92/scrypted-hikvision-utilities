@@ -24,6 +24,8 @@ export interface StreamingChannelUpdateParams {
     smoothing?: number;
     H264Profile?: string;
     H265Profile?: string;
+    audioEnabled?: boolean;
+    smartCodecEnabled?: boolean;
 }
 
 /**

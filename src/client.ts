@@ -134,10 +134,18 @@ export class HikvisionCameraAPI {
             const govLength = video?.GovLength?.[0];
             const govLengthData = getGovLengthValue(govLength);
             
+            // Extract audio settings
+            const audio = channel.Audio?.[0];
+            
             return {
                 id: channel.id?.[0],
                 channelName: channel.channelName?.[0],
                 enabled: channel.enabled?.[0] === 'true',
+                audio: {
+                    enabled: audio?.enabled?.[0] === 'true',
+                    audioInputChannelID: Number(audio?.audioInputChannelID?.[0]),
+                    audioCompressionType: audio?.audioCompressionType?.[0],
+                },
                 video: {
                     enabled: video?.enabled?.[0] === 'true',
                     videoCodecType: video?.videoCodecType?.[0],
@@ -163,6 +171,7 @@ export class HikvisionCameraAPI {
                     smoothing: Number(video?.smoothing?.[0]),
                     H264Profile: video?.H264Profile?.[0],
                     H265Profile: video?.H265Profile?.[0],
+                    smartCodecEnabled: video?.SmartCodec?.[0]?.enabled?.[0] === 'true',
                 }
             };
         }) || [];
@@ -184,7 +193,9 @@ export class HikvisionCameraAPI {
             videoQualityControlType,
             smoothing,
             H264Profile,
-            H265Profile
+            H265Profile,
+            audioEnabled,
+            smartCodecEnabled
         } = params;
         let { xml } = await this.getStreamingChannels();
 
@@ -249,6 +260,24 @@ export class HikvisionCameraAPI {
 
             if (H265Profile !== undefined) {
                 updatedChannel = updatedChannel.replace(/<H265Profile[^>]*>.*?<\/H265Profile>/s, `<H265Profile>${H265Profile}</H265Profile>`);
+            }
+
+            if (audioEnabled !== undefined) {
+                updatedChannel = updatedChannel.replace(
+                    /<Audio[^>]*>([\s\S]*?)<enabled[^>]*>.*?<\/enabled>([\s\S]*?)<\/Audio>/s,
+                    (fullMatch, before, after) => {
+                        return `<Audio${before.match(/^[^>]*/)?.[0] || ''}>${before.replace(/^[^>]*/, '')}<enabled>${audioEnabled}</enabled>${after}</Audio>`;
+                    }
+                );
+            }
+
+            if (smartCodecEnabled !== undefined) {
+                updatedChannel = updatedChannel.replace(
+                    /<SmartCodec[^>]*>([\s\S]*?)<enabled[^>]*>.*?<\/enabled>([\s\S]*?)<\/SmartCodec>/s,
+                    (fullMatch, before, after) => {
+                        return `<SmartCodec${before.match(/^[^>]*/)?.[0] || ''}>${before.replace(/^[^>]*/, '')}<enabled>${smartCodecEnabled}</enabled>${after}</SmartCodec>`;
+                    }
+                );
             }
 
             return updatedChannel;

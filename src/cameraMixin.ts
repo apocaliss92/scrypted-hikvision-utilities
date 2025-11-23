@@ -200,6 +200,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
 
             // Keyframe interval (GOP/I-Frame) setting in seconds
             const video = channel.video!;
+            const audio = channel.audio!;
             
             // Calculate min/max in seconds based on GovLength (frame count)
             // govLength (frames) / fps = seconds
@@ -214,7 +215,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
             
             streamSettings.push({
                 key: `${streamId}:govLength`,
-                title: `I-Frame Interval (seconds) (Stream ${streamId})`,
+                title: `I-Frame Interval (Stream ${streamId})`,
                 description: `Min: ${govLengthMinSec}s, Max: ${govLengthMaxSec}s (GOP)`,
                 subgroup: 'Stream',
                 type: 'string',
@@ -231,6 +232,73 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                     }
                 }
             });
+
+            // Fixed Quality setting
+            const fixedQualityChoices = [
+                'Minimum (1)',
+                'Very Low (20)',
+                'Low (40)',
+                'Medium (60)',
+                'High (80)',
+                'Maximum (100)'
+            ];
+            
+            streamSettings.push({
+                key: `${streamId}:fixedQuality`,
+                title: `Fixed Quality (Stream ${streamId})`,
+                subgroup: 'Stream',
+                type: 'string',
+                choices: fixedQualityChoices,
+                immediate: true,
+                onPut: async (old: string, value: string) => {
+                    if (old !== value && old !== undefined) {
+                        // Extract number from label like "Maximum (100)" -> 100
+                        const match = value.match(/\((\d+)\)/);
+                        const numericValue = match ? Number(match[1]) : Number(value);
+                        
+                        this.console.log(`Setting fixedQuality for stream ${streamId}: ${value} -> ${numericValue}`);
+                        
+                        await this.updateStreamingChannel(streamId, {
+                            fixedQuality: numericValue,
+                        });
+                    }
+                }
+            });
+
+            // Audio enabled setting
+            streamSettings.push({
+                key: `${streamId}:audioEnabled`,
+                title: `Audio Enabled (Stream ${streamId})`,
+                subgroup: 'Stream',
+                type: 'boolean',
+                immediate: true,
+                onPut: async (old: boolean, value: boolean) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateStreamingChannel(streamId, {
+                            audioEnabled: value,
+                        });
+                    }
+                }
+            });
+
+            // Smart Codec (H.265+) setting - only show for H.265 codec
+            if (video.videoCodecType === 'H.265') {
+                streamSettings.push({
+                    key: `${streamId}:smartCodecEnabled`,
+                    title: `H.265+ Smart Codec (Stream ${streamId})`,
+                    description: 'Enable H.265+ for better compression',
+                    subgroup: 'Stream',
+                    type: 'boolean',
+                    immediate: true,
+                    onPut: async (old: boolean, value: boolean) => {
+                        if (old !== value && old !== undefined) {
+                            await this.updateStreamingChannel(streamId, {
+                                smartCodecEnabled: value,
+                            });
+                        }
+                    }
+                });
+            }
         }
 
         return streamSettings;
@@ -272,6 +340,27 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
 
             // Set GOP length value (already in seconds from govLengthUI)
             this.storageSettings.values[`${streamId}:govLength`] = String(video.govLengthUI);
+
+            // Set fixed quality value with label
+            const fixedQualityLabels: Record<number, string> = {
+                1: 'Minimum (1)',
+                20: 'Very Low (20)',
+                40: 'Low (40)',
+                60: 'Medium (60)',
+                80: 'High (80)',
+                100: 'Maximum (100)'
+            };
+            const fixedQualityLabel = fixedQualityLabels[video.fixedQuality] || `Custom (${video.fixedQuality})`;
+            this.storageSettings.values[`${streamId}:fixedQuality`] = fixedQualityLabel;
+
+            // Set audio enabled value
+            const audio = channel.audio!;
+            this.storageSettings.values[`${streamId}:audioEnabled`] = audio.enabled;
+
+            // Set smart codec enabled value (only if H.265)
+            if (video.videoCodecType === 'H.265') {
+                this.storageSettings.values[`${streamId}:smartCodecEnabled`] = video.smartCodecEnabled;
+            }
         }
     }
 
@@ -282,6 +371,8 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
 
     async updateStreamingChannel(streamId: string, params: Partial<any>) {
         const client = await this.getClient();
+
+        this.console.log(`Updating stream ${streamId} with params:`, JSON.stringify(params, null, 2));
 
         await client.updateStreamingChannel({
             channelId: streamId,
