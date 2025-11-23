@@ -12,56 +12,9 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     streamCaps: any[] = [];
     motionCaps: any = null;
     audioCaps: any = null;
+    timeCaps: any = null;
 
-    initStorage: StorageSettingsDict<string> = {
-        motionEnabled: {
-            title: 'Motion enabled',
-            type: 'boolean',
-            subgroup: 'Motion',
-            immediate: true,
-            onPut: async (old: boolean, value: boolean) => {
-                if (old !== value) {
-                    await this.updateMotionDetection({ enabled: value });
-                }
-            }
-        },
-        motionSensitivity: {
-            title: 'Motion sensitivity',
-            subgroup: 'Motion',
-            type: 'string',
-            choices: [],
-            immediate: true,
-            onPut: async (old: string, value: string) => {
-                if (old !== value) {
-                    await this.updateMotionDetection({ motionSensitivity: value });
-                }
-            }
-        },
-        motionRefetch: {
-            title: 'Refetch',
-            subgroup: 'Motion',
-            type: 'button',
-            onPut: async () => {
-                await this.fetchMotionCapabilities();
-            }
-        },
-        streamsRefetch: {
-            title: 'Refetch',
-            subgroup: 'Stream',
-            type: 'button',
-            onPut: async () => {
-                await this.updateStreamCapabilities();
-            }
-        },
-        audioRefetch: {
-            title: 'Refetch',
-            subgroup: 'Audio',
-            type: 'button',
-            onPut: async () => {
-                await this.updateAudioCapabilities();
-            }
-        },
-    }
+    initStorage: StorageSettingsDict<string> = {}
 
     storageSettings = new StorageSettings(this, this.initStorage);
 
@@ -76,13 +29,15 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         await this.fetchMotionCapabilities();
         await this.fetchStreamCapabilities();
         await this.fetchAudioCapabilities();
+        await this.fetchTimeCapabilities();
 
         await this.refreshSettings();
         await this.refreshSettings();
+    }
 
-        this.storageSettings.settings.motionSensitivity.choices = this.motionCaps.sensitivityOptions;
-        this.storageSettings.values.motionEnabled = this.motionCaps.enabled;
-        this.storageSettings.values.motionSensitivity = String(this.motionCaps.sensitivityLevel);
+    async updateMotionCapabilities() {
+        await this.fetchMotionCapabilities();
+        this.setMotionSettingsValues();
     }
 
     async updateStreamCapabilities() {
@@ -95,6 +50,11 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         this.setAudioSettingsValues();
     }
 
+    async updateTimeCapabilities() {
+        await this.fetchTimeCapabilities();
+        this.setTimeSettingsValues();
+    }
+
     async fetchMotionCapabilities() {
         const client = await this.getClient();
         this.motionCaps = await client.getMotionCapabilities();
@@ -103,6 +63,61 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     async fetchAudioCapabilities() {
         const client = await this.getClient();
         this.audioCaps = await client.getTwoWayAudioCapabilities();
+    }
+
+    async fetchTimeCapabilities() {
+        const client = await this.getClient();
+        this.timeCaps = await client.getTimeCapabilities();
+    }
+
+    generateMotionSettings() {
+        const motionSettings: StorageSetting[] = [];
+
+        if (!this.motionCaps) {
+            return motionSettings;
+        }
+
+        // Motion Enabled setting
+        motionSettings.push({
+            key: 'motionEnabled',
+            title: 'Motion Enabled',
+            subgroup: 'Motion',
+            type: 'boolean',
+            immediate: true,
+            onPut: async (old: boolean, value: boolean) => {
+                if (old !== value && old !== undefined) {
+                    await this.updateMotionDetection({ enabled: value });
+                }
+            }
+        });
+
+        // Motion Sensitivity setting
+        motionSettings.push({
+            key: 'motionSensitivity',
+            title: 'Motion Sensitivity',
+            subgroup: 'Motion',
+            type: 'string',
+            choices: this.motionCaps.sensitivityOptions,
+            immediate: true,
+            onPut: async (old: string, value: string) => {
+                if (old !== value && old !== undefined) {
+                    await this.updateMotionDetection({ motionSensitivity: value });
+                }
+            }
+        });
+
+        // Refetch button
+        motionSettings.push({
+            key: 'motionRefetch',
+            title: 'Refetch',
+            subgroup: 'Motion',
+            type: 'button',
+            onPut: async () => {
+                await this.updateMotionCapabilities();
+            }
+        });
+
+        return motionSettings;
     }
 
     generateStreamSettings(streamCaps: any[]) {
@@ -219,18 +234,18 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
             // Keyframe interval (GOP/I-Frame) setting in seconds
             const video = channel.video!;
             const audio = channel.audio!;
-            
+
             // Calculate min/max in seconds based on GovLength (frame count)
             // govLength (frames) / fps = seconds
             const fps = video.maxFrameRate / 100; // Convert centesimal to fps
             const govLengthMinSec = Math.ceil(video.govLengthMin / fps);
             const govLengthMaxSec = Math.floor(video.govLengthMax / fps);
-                
+
             const govLengthChoices: string[] = [];
             for (let i = govLengthMinSec; i <= govLengthMaxSec; i++) {
                 govLengthChoices.push(String(i));
             }
-            
+
             streamSettings.push({
                 key: `${streamId}:govLength`,
                 title: `I-Frame Interval (Stream ${streamId})`,
@@ -243,7 +258,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                     if (old !== value && old !== undefined) {
                         // Convert seconds to frame count: seconds * fps
                         const govLengthInFrames = Math.round(Number(value) * fps);
-                        
+
                         await this.updateStreamingChannel(streamId, {
                             govLength: govLengthInFrames,
                         });
@@ -260,7 +275,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                 'High (80)',
                 'Maximum (100)'
             ];
-            
+
             streamSettings.push({
                 key: `${streamId}:fixedQuality`,
                 title: `Fixed Quality (Stream ${streamId})`,
@@ -273,9 +288,9 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                         // Extract number from label like "Maximum (100)" -> 100
                         const match = value.match(/\((\d+)\)/);
                         const numericValue = match ? Number(match[1]) : Number(value);
-                        
+
                         this.console.log(`Setting fixedQuality for stream ${streamId}: ${value} -> ${numericValue}`);
-                        
+
                         await this.updateStreamingChannel(streamId, {
                             fixedQuality: numericValue,
                         });
@@ -319,6 +334,17 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
             }
         }
 
+        // Refetch button
+        streamSettings.push({
+            key: 'streamsRefetch',
+            title: 'Refetch',
+            subgroup: 'Stream',
+            type: 'button',
+            onPut: async () => {
+                await this.updateStreamCapabilities();
+            }
+        });
+
         return streamSettings;
     }
 
@@ -326,16 +352,8 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         const audioSettings: StorageSetting[] = [];
 
         if (!this.audioCaps) {
-            this.console.log('Audio settings not generated: audioCaps or audioSettings not available');
             return audioSettings;
         }
-
-        this.console.log('Generating audio settings with capabilities:', {
-            codecs: this.audioCaps.audioCodecs,
-            inputTypes: this.audioCaps.audioInputTypes,
-            volumeRange: `${this.audioCaps.speakerVolumeMin}-${this.audioCaps.speakerVolumeMax}`,
-            supportsNoiseReduction: this.audioCaps.supportsNoiseReduction
-        });
 
         // Audio Codec setting
         audioSettings.push({
@@ -415,7 +433,214 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
             }
         });
 
+        // Refetch button
+        audioSettings.push({
+            key: 'audioRefetch',
+            title: 'Refetch',
+            subgroup: 'Audio',
+            type: 'button',
+            onPut: async () => {
+                await this.updateAudioCapabilities();
+            }
+        });
+
         return audioSettings;
+    }
+
+    generateTimeSettings() {
+        const timeSettings: StorageSetting[] = [];
+
+        if (!this.timeCaps) {
+            return timeSettings;
+        }
+
+        // Get current timeMode from storage (if already set)
+        const currentTimeMode = this.storageSettings.values['timeMode'];
+
+        // Time Mode setting (NTP or manual) - ALWAYS show
+        timeSettings.push({
+            key: 'timeMode',
+            title: 'Time Mode',
+            subgroup: 'Time',
+            type: 'string',
+            choices: this.timeCaps.timeModes || [],
+            immediate: true,
+            onPut: async (old: string, value: string) => {
+                if (old !== value && old !== undefined) {
+                    // If switching to manual mode, automatically send current time
+                    if (value === 'manual') {
+                        const now = new Date();
+                        // Format: YYYY-MM-DDTHH:MM:SS
+                        const localTime = now.toISOString().slice(0, 19);
+                        await this.updateTime({
+                            timeMode: value,
+                            localTime: localTime,
+                        });
+                    } else {
+                        await this.updateTime({
+                            timeMode: value,
+                        });
+                    }
+                    // Regenerate settings to show/hide conditional fields
+                    await this.updateTimeCapabilities();
+                    await this.refreshSettings();
+                }
+            }
+        });
+
+        // NTP Server settings (only shown when timeMode is NTP)
+        if (currentTimeMode === 'NTP') {
+            timeSettings.push({
+                key: 'ntpServer',
+                title: 'NTP Server IP',
+                description: 'IP address of NTP server',
+                subgroup: 'Time',
+                type: 'string',
+                immediate: true,
+                onPut: async (old: string, value: string) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateNTPServer({
+                            ipAddress: value,
+                        });
+                    }
+                }
+            });
+
+            timeSettings.push({
+                key: 'ntpPort',
+                title: 'NTP Server Port',
+                description: 'Port number of NTP server',
+                subgroup: 'Time',
+                type: 'number',
+                immediate: true,
+                onPut: async (old: number, value: number) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateNTPServer({
+                            portNo: value,
+                        });
+                    }
+                }
+            });
+
+            // NTP Sync Interval in hours (1-36 hours)
+            const syncIntervalChoices: string[] = [];
+            for (let i = 1; i <= 36; i++) {
+                syncIntervalChoices.push(`${i} hour${i > 1 ? 's' : ''}`);
+            }
+
+            timeSettings.push({
+                key: 'ntpSyncInterval',
+                title: 'NTP Sync Interval',
+                description: 'How often to sync with NTP server',
+                subgroup: 'Time',
+                type: 'string',
+                choices: syncIntervalChoices,
+                immediate: true,
+                onPut: async (old: string, value: string) => {
+                    if (old !== value && old !== undefined) {
+                        // Extract hours from "X hour(s)" and convert to minutes
+                        const match = value.match(/^(\d+) hour/);
+                        if (match) {
+                            const hours = Number(match[1]);
+                            const minutes = hours * 60;
+                            await this.updateNTPServer({
+                                synchronizeInterval: minutes,
+                            });
+                        }
+                    }
+                }
+            });
+        }
+
+        // Time Zone setting - ALWAYS show
+        const timezoneChoices = [
+            'UTC-12:00:00', 'UTC-11:00:00', 'UTC-10:00:00', 'UTC-9:00:00', 'UTC-8:00:00',
+            'UTC-7:00:00', 'UTC-6:00:00', 'UTC-5:00:00', 'UTC-4:00:00', 'UTC-3:00:00',
+            'UTC-2:00:00', 'UTC-1:00:00', 'UTC+0:00:00', 'UTC+1:00:00', 'UTC+2:00:00',
+            'UTC+3:00:00', 'UTC+4:00:00', 'UTC+5:00:00', 'UTC+6:00:00', 'UTC+7:00:00',
+            'UTC+8:00:00', 'UTC+9:00:00', 'UTC+10:00:00', 'UTC+11:00:00', 'UTC+12:00:00'
+        ];
+
+        timeSettings.push({
+            key: 'timeZone',
+            title: 'Time Zone',
+            description: 'Select timezone offset from UTC',
+            subgroup: 'Time',
+            type: 'string',
+            choices: timezoneChoices,
+            immediate: true,
+            onPut: async (old: string, value: string) => {
+                if (old !== value && old !== undefined) {
+                    // Convert UTC+1:00:00 to CST-1:00:00 format (Hikvision uses CST with inverted sign)
+                    const match = value.match(/UTC([+-])(\d+):00:00/);
+                    if (match) {
+                        const sign = match[1] === '+' ? '-' : '+';
+                        const hours = match[2];
+                        const baseTimezone = `CST${sign}${hours}:00:00`;
+
+                        // Preserve DST if it was enabled
+                        const dstSuffix = 'DST01:00:00,M3.5.0/02:00:00,M10.5.0/03:00:00';
+                        const hasDST = this.storageSettings.values['daylightSaving'] === true;
+                        const newTZ = hasDST ? `${baseTimezone}${dstSuffix}` : baseTimezone;
+
+                        await this.updateTime({
+                            timeZone: newTZ,
+                        });
+                    }
+                }
+            }
+        });
+
+        // Daylight Saving Time (DST) setting - ALWAYS show
+        const dstSuffix = 'DST01:00:00,M3.5.0/02:00:00,M10.5.0/03:00:00';
+        timeSettings.push({
+            key: 'daylightSaving',
+            title: 'Daylight Saving Time',
+            description: 'Enable DST (Ora Legale)',
+            subgroup: 'Time',
+            type: 'boolean',
+            immediate: true,
+            onPut: async (old: boolean, value: boolean) => {
+                if (old !== value && old !== undefined) {
+                    // Get current timezone from storage and reconstruct it
+                    const currentUTCTz = this.storageSettings.values['timeZone'] || 'UTC+1:00:00';
+                    const match = currentUTCTz.match(/UTC([+-])(\d+):00:00/);
+                    if (match) {
+                        const sign = match[1] === '+' ? '-' : '+';
+                        const hours = match[2];
+                        const baseTZ = `CST${sign}${hours}:00:00`;
+                        const newTZ = value ? `${baseTZ}${dstSuffix}` : baseTZ;
+
+                        await this.updateTime({
+                            timeZone: newTZ,
+                        });
+                    }
+                }
+            }
+        });
+
+        // Refetch button
+        timeSettings.push({
+            key: 'timeRefetch',
+            title: 'Refetch',
+            subgroup: 'Time',
+            type: 'button',
+            onPut: async () => {
+                await this.updateTimeCapabilities();
+            }
+        });
+
+        return timeSettings;
+    }
+
+    setMotionSettingsValues() {
+        if (!this.motionCaps) return;
+
+        // Set motion enabled value
+        this.storageSettings.values['motionEnabled'] = this.motionCaps.enabled;
+
+        // Set motion sensitivity value
+        this.storageSettings.values['motionSensitivity'] = String(this.motionCaps.sensitivityLevel);
     }
 
     setStreamSettingsValues(streamCaps: any[]) {
@@ -492,14 +717,51 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         // Set codec value
         this.storageSettings.values['audioCodec'] = audioConfig.audioCompressionType;
 
-        // Set speaker volume value
-        this.storageSettings.values['speakerVolume'] = audioConfig.speakerVolume;
+        // Set speaker volume value (convert to string to match choices type)
+        this.storageSettings.values['speakerVolume'] = String(audioConfig.speakerVolume);
 
         // Set noise reduction value
         this.storageSettings.values['noiseReduction'] = audioConfig.noiseReduction;
 
         // Set audio input type value
         this.storageSettings.values['audioInputType'] = audioConfig.audioInputType;
+    }
+
+    async setTimeSettingsValues() {
+        const client = await this.getClient();
+        const timeConfig = await client.getTime();
+        const ntpConfig = await client.getNTPServer();
+
+        if (!timeConfig) return;
+
+        // Set time mode value
+        this.storageSettings.values['timeMode'] = timeConfig.timeMode;
+
+        // Set NTP server values (if in NTP mode)
+        if (timeConfig.timeMode === 'NTP' && ntpConfig) {
+            this.storageSettings.values['ntpServer'] = ntpConfig.ipAddress;
+            this.storageSettings.values['ntpPort'] = ntpConfig.portNo;
+            
+            // Convert minutes to hours for display
+            const minutes = ntpConfig.synchronizeInterval;
+            const hours = Math.round(minutes / 60);
+            this.storageSettings.values['ntpSyncInterval'] = `${hours} hour${hours > 1 ? 's' : ''}`;
+        }
+
+        // Set timezone value - convert from CST-1:00:00 to UTC+1:00:00 format
+        if (timeConfig.timeZone) {
+            const baseTZ = timeConfig.timeZone.split('DST')[0]; // Remove DST part
+            const match = baseTZ.match(/CST([+-])(\d+):00:00/);
+            if (match) {
+                const sign = match[1] === '-' ? '+' : '-'; // Invert sign for display
+                const hours = match[2];
+                this.storageSettings.values['timeZone'] = `UTC${sign}${hours}:00:00`;
+            }
+        }
+
+        // Set daylight saving time value
+        const hasDST = timeConfig.timeZone?.includes('DST');
+        this.storageSettings.values['daylightSaving'] = hasDST;
     }
 
     async updateStreamingChannel(streamId: string, params: Partial<any>) {
@@ -524,6 +786,22 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         await client.updateTwoWayAudio(params);
 
         // Don't refetch automatically to avoid infinite loops
+    }
+
+    async updateTime(params: Partial<any>) {
+        const client = await this.getClient();
+
+        this.console.log('Updating time with params:', JSON.stringify(params, null, 2));
+
+        await client.updateTime(params);
+    }
+
+    async updateNTPServer(params: Partial<any>) {
+        const client = await this.getClient();
+
+        this.console.log('Updating NTP server with params:', JSON.stringify(params, null, 2));
+
+        await client.updateNTPServer(params);
     }
 
     async updateMotionDetection({ enabled, motionSensitivity }: Partial<MotionDetectionUpdateParams>) {
@@ -572,11 +850,17 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     async refreshSettings() {
         const dynamicSettings: StorageSetting[] = [];
 
+        const motionSettings = this.generateMotionSettings();
+        dynamicSettings.push(...motionSettings);
+
         const streamSettings = this.generateStreamSettings(this.streamCaps);
         dynamicSettings.push(...streamSettings);
 
         const audioSettings = this.generateAudioSettings();
         dynamicSettings.push(...audioSettings);
+
+        const timeSettings = this.generateTimeSettings();
+        dynamicSettings.push(...timeSettings);
 
         this.storageSettings = await convertSettingsToStorageSettings({
             device: this,
@@ -585,8 +869,10 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         });
 
         // Set values after settings are created
+        this.setMotionSettingsValues();
         this.setStreamSettingsValues(this.streamCaps);
         this.setAudioSettingsValues();
+        this.setTimeSettingsValues();
     }
 
     async getMixinSettings(): Promise<Setting[]> {

@@ -491,4 +491,152 @@ export class HikvisionCameraAPI {
 
         return response;
     }
+
+    async getTimeCapabilities() {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/System/time/capabilities`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        });
+
+        const data = json.Time;
+        
+        // Parse time mode options
+        const timeMode = data.timeMode?.[0];
+        const timeModes = typeof timeMode === 'object' 
+            ? timeMode.$.opt.split(',') 
+            : [];
+
+        return {
+            timeModes,
+        };
+    }
+
+    async getTime() {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/System/time`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        });
+
+        const data = json.Time;
+
+        return {
+            xml: response.body,
+            timeMode: data.timeMode?.[0],
+            localTime: data.localTime?.[0],
+            timeZone: data.timeZone?.[0],
+        };
+    }
+
+    async getNTPServer() {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/System/time/ntpServers/1`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        });
+
+        const data = json.NTPServer;
+
+        return {
+            xml: response.body,
+            ipAddress: data.ipAddress?.[0],
+            portNo: Number(data.portNo?.[0]),
+            synchronizeInterval: Number(data.synchronizeInterval?.[0]),
+        };
+    }
+
+    async updateTime(params: {
+        timeMode?: string;
+        localTime?: string;
+        timeZone?: string;
+    }) {
+        let { xml } = await this.getTime();
+
+        if (params.timeMode !== undefined) {
+            xml = xml.replace(/<timeMode[^>]*>.*?<\/timeMode>/s, `<timeMode>${params.timeMode}</timeMode>`);
+        }
+
+        if (params.localTime !== undefined) {
+            // Remove existing localTime tag if present
+            xml = xml.replace(/<localTime[^>]*>.*?<\/localTime>\s*/s, '');
+            // Add new localTime after timeMode
+            xml = xml.replace(/(<timeMode>[^<]*<\/timeMode>)/s, `$1\n    <localTime>${params.localTime}</localTime>`);
+        }
+
+        if (params.timeZone !== undefined) {
+            xml = xml.replace(/<timeZone[^>]*>.*?<\/timeZone>/s, `<timeZone>${params.timeZone}</timeZone>`);
+        }
+
+        const response = await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/System/time`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+            body: xml,
+        });
+
+        return response;
+    }
+
+    async updateNTPServer(params: {
+        ipAddress?: string;
+        portNo?: number;
+        synchronizeInterval?: number;
+    }) {
+        let { xml } = await this.getNTPServer();
+
+        if (params.ipAddress !== undefined) {
+            xml = xml.replace(/<ipAddress[^>]*>.*?<\/ipAddress>/s, `<ipAddress>${params.ipAddress}</ipAddress>`);
+        }
+
+        if (params.portNo !== undefined) {
+            xml = xml.replace(/<portNo[^>]*>.*?<\/portNo>/s, `<portNo>${params.portNo}</portNo>`);
+        }
+
+        if (params.synchronizeInterval !== undefined) {
+            xml = xml.replace(/<synchronizeInterval[^>]*>.*?<\/synchronizeInterval>/s, `<synchronizeInterval>${params.synchronizeInterval}</synchronizeInterval>`);
+        }
+
+        const response = await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/System/time/ntpServers/1`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+            body: xml,
+        });
+
+        return response;
+    }
 }
