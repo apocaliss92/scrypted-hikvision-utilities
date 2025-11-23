@@ -1,88 +1,63 @@
-export interface VideoOverlayRoot {
-    VideoOverlay: VideoOverlay;
-}
-
-export interface VideoOverlay {
-    $:                    VideoOverlayClass;
-    normalizedScreenSize: NormalizedScreenSize[];
-    attribute:            Attribute[];
-    fontSize:             string[];
-    TextOverlayList:      TextOverlayListElement[];
-    DateTimeOverlay:      DateTimeOverlay[];
-    channelNameOverlay:   ChannelNameOverlay[];
-    frontColorMode:       string[];
-    frontColor:           string[];
-    alignment:            string[];
-    boundary:             string[];
-    upDownboundary:       string[];
-    leftRightboundary:    string[];
-}
-
-export interface VideoOverlayClass {
+export interface VersionXmlns {
     version: string;
     xmlns:   string;
 }
 
-export interface DateTimeOverlay {
-    enabled:     string[];
-    positionX:   string[];
-    positionY:   string[];
-    dateStyle:   string[];
-    timeStyle:   string[];
-    displayWeek: string[];
+export interface MotionDetectionRoot {
+    MotionDetection: MotionDetection;
 }
 
-export interface TextOverlayListElement {
-    $:           TextOverlayList;
-    TextOverlay: TextOverlay[];
+export interface MotionDetection {
+    $:                      VersionXmlns;
+    enabled:                EnabledHighlight[];
+    enableHighlight:        EnabledHighlight[];
+    samplingInterval:       string[];
+    startTriggerTime:       string[];
+    endTriggerTime:         string[];
+    regionType:             RegionType[];
+    Grid:                   Grid[];
+    MotionDetectionLayout:  MotionDetectionLayout[];
 }
 
-export interface TextOverlayList {
-    size: string;
+export interface EnabledHighlight {
+    _: string;
+    $: EnabledOpt;
 }
 
-export interface TextOverlay {
-    id:               string[];
-    enabled:          string[];
-    positionX:        string[];
-    positionY:        string[];
-    displayText:      string[];
-    isPersistentText: string[];
+export interface EnabledOpt {
+    opt: string;
 }
 
-export interface Attribute {
-    transparent: string[];
-    flashing:    string[];
+export interface Grid {
+    rowGranularity:    string[];
+    columnGranularity: string[];
 }
 
-export interface ChannelNameOverlay {
-    $:         VideoOverlayClass;
-    enabled:   string[];
-    positionX: string[];
-    positionY: string[];
+export interface MotionDetectionLayout {
+    sensitivityLevel: SensitivityLevel[];
+    layout:           Layout[];
 }
 
-export interface NormalizedScreenSize {
-    normalizedScreenWidth:  string[];
-    normalizedScreenHeight: string[];
+export interface Layout {
+    gridMap: string[];
 }
 
-
-export interface TextOverlayRoot {
-    TextOverlay: TextOverlay;
+export interface SensitivityLevel {
+    _: string;
+    $: SensitivityLevelOpt;
 }
 
-export interface TextOverlay {
-    $:           Empty;
-    id:          string[];
-    enabled:     string[];
-    positionX:   string[];
-    positionY:   string[];
-    displayText: string[];
-    directAngle: string[];
+export interface SensitivityLevelOpt {
+    min:  string;
+    max:  string;
+    step: string;
 }
 
-export interface Empty {
-    version: string;
-    xmlns:   string;
+export interface RegionType {
+    _: string;
+    $: RegionTypeOpt;
+}
+
+export interface RegionTypeOpt {
+    opt: string;
 }

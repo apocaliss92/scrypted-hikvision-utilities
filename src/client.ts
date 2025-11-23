@@ -2,7 +2,8 @@ import { AuthFetchCredentialState, HttpFetchOptions, authHttpFetch } from '@scry
 import { Readable } from 'stream';
 import xml2js from 'xml2js';
 import { Destroyable } from '../../scrypted/plugins/rtsp/src/rtsp';
-import { TextOverlayRoot, VideoOverlayRoot } from './types';
+import { MotionDetectionRoot } from './types';
+import { MotionDetectionUpdateParams } from './utils';
 
 export class HikvisionCameraAPI {
     credential: AuthFetchCredentialState;
@@ -32,61 +33,55 @@ export class HikvisionCameraAPI {
         return response;
     }
 
-    async getOverlay() {
+    async getMotionCapabilities() {
+        const channelId = String(this.channel?.[0] ?? 1);
         const response = await this.request({
             method: 'GET',
-            url: `http://${this.ip}/ISAPI/System/Video/inputs/channels/1/overlays`,
+            url: `http://${this.ip}//ISAPI/System/Video/inputs/channels/${channelId}/motionDetection/capabilities`,
             responseType: 'text',
             headers: {
                 'Content-Type': 'application/xml',
             },
         });
-        const json = await xml2js.parseStringPromise(response.body) as VideoOverlayRoot;
+        const json = await xml2js.parseStringPromise(response.body) as MotionDetectionRoot;
 
-        return { json, xml: response.body };
+        const data = json.MotionDetection;
+        const enabled = data.enabled[0]?._ === 'true';
+        const sensitivtyData = data.MotionDetectionLayout[0]?.sensitivityLevel[0];
+        const min = Number(sensitivtyData?.$?.min ?? "0");
+        const max = Number(sensitivtyData?.$?.max ?? "100");
+        const step = Number(sensitivtyData?.$?.step ?? "20");
+        const sensitivityOptions = [String(min)];
+        for (let i = min + step; i <= max; i += step) {
+            sensitivityOptions.push(String(i));
+        }
+        const sensitivityLevel = Number(sensitivtyData?._ ?? "0");
+        return { xml: response.body, enabled, sensitivityLevel, sensitivityOptions };
     }
 
-    async updateOverlay(entry: VideoOverlayRoot) {
-        const builder = new xml2js.Builder();
-        const xml = builder.buildObject(entry);
+    async updateMotionDetection(props: MotionDetectionUpdateParams) {
+        const { enabled, motionSensitivity } = props;
+        const channelId = String(this.channel?.[0] ?? 1);
+        let { xml } = await this.getMotionCapabilities();
 
-        await this.request({
-            method: 'PUT',
-            url: `http://${this.ip}/ISAPI/System/Video/inputs/channels/1/overlays`,
-            responseType: 'text',
-            headers: {
-                'Content-Type': 'application/xml',
-            },
-            body: xml
-        });
-    }
+        if (enabled !== undefined) {
+            xml = xml.replace(/<enabled[^>]*>.*?<\/enabled>/s, `<enabled>${enabled}</enabled>`);
+        }
 
-    async getOverlayText(overlayId: string) {
+        if (motionSensitivity !== undefined) {
+            xml = xml.replace(/<sensitivityLevel[^>]*>.*?<\/sensitivityLevel>/s, `<sensitivityLevel>${motionSensitivity}</sensitivityLevel>`);
+        }
+
         const response = await this.request({
-            method: 'GET',
-            url: `http://${this.ip}//ISAPI/System/Video/inputs/channels/1/overlays/text/${overlayId}`,
-            responseType: 'text',
-            headers: {
-                'Content-Type': 'application/xml',
-            },
-        });
-        const json = await xml2js.parseStringPromise(response.body) as TextOverlayRoot;
-
-        return { json, xml: response.body };
-    }
-
-    async updateOverlayText(overlayId: string, entry: TextOverlayRoot) {
-        const builder = new xml2js.Builder();
-        const xml = builder.buildObject(entry);
-
-        await this.request({
             method: 'PUT',
-            url: `http://${this.ip}//ISAPI/System/Video/inputs/channels/1/overlays/text/${overlayId}`,
+            url: `http://${this.ip}/ISAPI/System/Video/inputs/channels/${channelId}/motionDetection`,
             responseType: 'text',
             headers: {
                 'Content-Type': 'application/xml',
             },
-            body: xml
+            body: xml,
         });
+
+        return response;
     }
 }
