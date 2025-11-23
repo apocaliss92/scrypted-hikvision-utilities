@@ -378,4 +378,117 @@ export class HikvisionCameraAPI {
 
         return channelsWithCapabilities;
     }
+
+    async getTwoWayAudioCapabilities() {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/System/TwoWayAudio/channels/1/capabilities`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        });
+
+        const data = json.TwoWayAudioChannel;
+        
+        // Parse audio compression types
+        const audioCompressionType = data.audioCompressionType?.[0];
+        const audioCodecs = typeof audioCompressionType === 'object' 
+            ? audioCompressionType.$.opt.split(',') 
+            : [];
+
+        // Parse audio input types
+        const audioInputType = data.audioInputType?.[0];
+        const audioInputTypes = typeof audioInputType === 'object'
+            ? audioInputType.$.opt.split(',')
+            : [];
+
+        // Parse speaker volume range
+        const speakerVolume = data.speakerVolume?.[0];
+        const speakerVolumeMin = typeof speakerVolume === 'object' 
+            ? Number(speakerVolume.$.min) 
+            : 0;
+        const speakerVolumeMax = typeof speakerVolume === 'object'
+            ? Number(speakerVolume.$.max)
+            : 100;
+
+        return {
+            audioCodecs,
+            audioInputTypes,
+            speakerVolumeMin,
+            speakerVolumeMax,
+            supportsNoiseReduction: data.noisereduce?.[0]?.$.opt?.includes('true') || false,
+        };
+    }
+
+    async getTwoWayAudio() {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/System/TwoWayAudio/channels/1`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        });
+
+        const data = json.TwoWayAudioChannel;
+
+        return {
+            xml: response.body,
+            enabled: data.enabled?.[0] === 'true',
+            audioCompressionType: data.audioCompressionType?.[0],
+            speakerVolume: Number(data.speakerVolume?.[0]),
+            noiseReduction: data.noisereduce?.[0] === 'true',
+            audioInputType: data.audioInputType?.[0],
+        };
+    }
+
+    async updateTwoWayAudio(params: {
+        audioCompressionType?: string;
+        speakerVolume?: number;
+        noiseReduction?: boolean;
+        audioInputType?: string;
+    }) {
+        let { xml } = await this.getTwoWayAudio();
+
+        if (params.audioCompressionType !== undefined) {
+            xml = xml.replace(/<audioCompressionType[^>]*>.*?<\/audioCompressionType>/s, `<audioCompressionType>${params.audioCompressionType}</audioCompressionType>`);
+        }
+
+        if (params.speakerVolume !== undefined) {
+            xml = xml.replace(/<speakerVolume[^>]*>.*?<\/speakerVolume>/s, `<speakerVolume>${params.speakerVolume}</speakerVolume>`);
+        }
+
+        if (params.noiseReduction !== undefined) {
+            xml = xml.replace(/<noisereduce[^>]*>.*?<\/noisereduce>/s, `<noisereduce>${params.noiseReduction}</noisereduce>`);
+        }
+
+        if (params.audioInputType !== undefined) {
+            xml = xml.replace(/<audioInputType[^>]*>.*?<\/audioInputType>/s, `<audioInputType>${params.audioInputType}</audioInputType>`);
+        }
+
+        const response = await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/System/TwoWayAudio/channels/1`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+            body: xml,
+        });
+
+        return response;
+    }
 }

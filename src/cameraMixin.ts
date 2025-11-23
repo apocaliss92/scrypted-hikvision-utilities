@@ -11,6 +11,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     killed: boolean;
     streamCaps: any[] = [];
     motionCaps: any = null;
+    audioCaps: any = null;
 
     initStorage: StorageSettingsDict<string> = {
         motionEnabled: {
@@ -52,6 +53,14 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                 await this.updateStreamCapabilities();
             }
         },
+        audioRefetch: {
+            title: 'Refetch',
+            subgroup: 'Audio',
+            type: 'button',
+            onPut: async () => {
+                await this.updateAudioCapabilities();
+            }
+        },
     }
 
     storageSettings = new StorageSettings(this, this.initStorage);
@@ -66,6 +75,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     async init() {
         await this.fetchMotionCapabilities();
         await this.fetchStreamCapabilities();
+        await this.fetchAudioCapabilities();
 
         await this.refreshSettings();
         await this.refreshSettings();
@@ -73,8 +83,6 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         this.storageSettings.settings.motionSensitivity.choices = this.motionCaps.sensitivityOptions;
         this.storageSettings.values.motionEnabled = this.motionCaps.enabled;
         this.storageSettings.values.motionSensitivity = String(this.motionCaps.sensitivityLevel);
-
-        this.setStreamSettingsValues(this.streamCaps);
     }
 
     async updateStreamCapabilities() {
@@ -82,9 +90,19 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         this.setStreamSettingsValues(this.streamCaps);
     }
 
+    async updateAudioCapabilities() {
+        await this.fetchAudioCapabilities();
+        this.setAudioSettingsValues();
+    }
+
     async fetchMotionCapabilities() {
         const client = await this.getClient();
         this.motionCaps = await client.getMotionCapabilities();
+    }
+
+    async fetchAudioCapabilities() {
+        const client = await this.getClient();
+        this.audioCaps = await client.getTwoWayAudioCapabilities();
     }
 
     generateStreamSettings(streamCaps: any[]) {
@@ -304,6 +322,102 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         return streamSettings;
     }
 
+    generateAudioSettings() {
+        const audioSettings: StorageSetting[] = [];
+
+        if (!this.audioCaps) {
+            this.console.log('Audio settings not generated: audioCaps or audioSettings not available');
+            return audioSettings;
+        }
+
+        this.console.log('Generating audio settings with capabilities:', {
+            codecs: this.audioCaps.audioCodecs,
+            inputTypes: this.audioCaps.audioInputTypes,
+            volumeRange: `${this.audioCaps.speakerVolumeMin}-${this.audioCaps.speakerVolumeMax}`,
+            supportsNoiseReduction: this.audioCaps.supportsNoiseReduction
+        });
+
+        // Audio Codec setting
+        audioSettings.push({
+            key: 'audioCodec',
+            title: 'Audio Codec',
+            subgroup: 'Audio',
+            type: 'string',
+            choices: this.audioCaps.audioCodecs,
+            immediate: true,
+            onPut: async (old: string, value: string) => {
+                if (old !== value && old !== undefined) {
+                    await this.updateAudio({
+                        audioCompressionType: value,
+                    });
+                }
+            }
+        });
+
+        // Speaker Volume setting
+        const volumeChoices: string[] = [];
+        for (let i = this.audioCaps.speakerVolumeMin; i <= this.audioCaps.speakerVolumeMax; i += 10) {
+            volumeChoices.push(String(i));
+        }
+        if (!volumeChoices.includes(String(this.audioCaps.speakerVolumeMax))) {
+            volumeChoices.push(String(this.audioCaps.speakerVolumeMax));
+        }
+
+        audioSettings.push({
+            key: 'speakerVolume',
+            title: 'Speaker Volume',
+            description: `Range: ${this.audioCaps.speakerVolumeMin}-${this.audioCaps.speakerVolumeMax}`,
+            subgroup: 'Audio',
+            type: 'string',
+            choices: volumeChoices,
+            immediate: true,
+            onPut: async (old: string, value: string) => {
+                if (old !== value && old !== undefined) {
+                    await this.updateAudio({
+                        speakerVolume: Number(value),
+                    });
+                }
+            }
+        });
+
+        // Noise Reduction setting
+        if (this.audioCaps.supportsNoiseReduction) {
+            audioSettings.push({
+                key: 'noiseReduction',
+                title: 'Noise Reduction',
+                subgroup: 'Audio',
+                type: 'boolean',
+                immediate: true,
+                onPut: async (old: boolean, value: boolean) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateAudio({
+                            noiseReduction: value,
+                        });
+                    }
+                }
+            });
+        }
+
+        // Audio Input Type setting
+        audioSettings.push({
+            key: 'audioInputType',
+            title: 'Audio Input Type',
+            subgroup: 'Audio',
+            type: 'string',
+            choices: this.audioCaps.audioInputTypes,
+            immediate: true,
+            onPut: async (old: string, value: string) => {
+                if (old !== value && old !== undefined) {
+                    await this.updateAudio({
+                        audioInputType: value,
+                    });
+                }
+            }
+        });
+
+        return audioSettings;
+    }
+
     setStreamSettingsValues(streamCaps: any[]) {
         for (const channel of streamCaps) {
             const streamId = channel.id!;
@@ -369,6 +483,25 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         this.streamCaps = await client.getStreamingCapabilities();
     }
 
+    async setAudioSettingsValues() {
+        const client = await this.getClient();
+        const audioConfig = await client.getTwoWayAudio();
+
+        if (!audioConfig) return;
+
+        // Set codec value
+        this.storageSettings.values['audioCodec'] = audioConfig.audioCompressionType;
+
+        // Set speaker volume value
+        this.storageSettings.values['speakerVolume'] = audioConfig.speakerVolume;
+
+        // Set noise reduction value
+        this.storageSettings.values['noiseReduction'] = audioConfig.noiseReduction;
+
+        // Set audio input type value
+        this.storageSettings.values['audioInputType'] = audioConfig.audioInputType;
+    }
+
     async updateStreamingChannel(streamId: string, params: Partial<any>) {
         const client = await this.getClient();
 
@@ -381,6 +514,16 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
 
         // Don't refetch automatically to avoid infinite loops
         // The user can manually refetch using the "Refetch" button if needed
+    }
+
+    async updateAudio(params: Partial<any>) {
+        const client = await this.getClient();
+
+        this.console.log('Updating audio with params:', JSON.stringify(params, null, 2));
+
+        await client.updateTwoWayAudio(params);
+
+        // Don't refetch automatically to avoid infinite loops
     }
 
     async updateMotionDetection({ enabled, motionSensitivity }: Partial<MotionDetectionUpdateParams>) {
@@ -432,6 +575,9 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         const streamSettings = this.generateStreamSettings(this.streamCaps);
         dynamicSettings.push(...streamSettings);
 
+        const audioSettings = this.generateAudioSettings();
+        dynamicSettings.push(...audioSettings);
+
         this.storageSettings = await convertSettingsToStorageSettings({
             device: this,
             dynamicSettings,
@@ -440,6 +586,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
 
         // Set values after settings are created
         this.setStreamSettingsValues(this.streamCaps);
+        this.setAudioSettingsValues();
     }
 
     async getMixinSettings(): Promise<Setting[]> {
