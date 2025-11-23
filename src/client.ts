@@ -2,8 +2,8 @@ import { AuthFetchCredentialState, HttpFetchOptions, authHttpFetch } from '@scry
 import { Readable } from 'stream';
 import xml2js from 'xml2js';
 import { Destroyable } from '../../scrypted/plugins/rtsp/src/rtsp';
-import { MotionDetectionRoot } from './types';
-import { MotionDetectionUpdateParams } from './utils';
+import { DynamicCapRoot, MotionDetectionRoot, StreamingChannelListRoot } from './types';
+import { MotionDetectionUpdateParams, StreamingChannelUpdateParams, formatFrameRate, formatKeyFrameInterval } from './utils';
 
 export class HikvisionCameraAPI {
     credential: AuthFetchCredentialState;
@@ -83,5 +83,270 @@ export class HikvisionCameraAPI {
         });
 
         return response;
+    }
+
+    async getStreamingChannels() {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/Streaming/channels`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        }) as StreamingChannelListRoot;
+
+        // Extract channel configurations
+        const channels = json.StreamingChannelList?.StreamingChannel?.map(channel => {
+            const video = channel.Video?.[0];
+            
+            // Helper to extract value with attributes
+            const getBitrateValue = (field: string | { _: string; $: { min: string; max: string } } | undefined) => {
+                if (!field) return { value: 0, min: 32, max: 16384 };
+                if (typeof field === 'string') return { value: Number(field), min: 32, max: 16384 };
+                return {
+                    value: Number(field._ || 0),
+                    min: Number(field.$.min || 32),
+                    max: Number(field.$.max || 16384)
+                };
+            };
+
+            const constantBitRateData = getBitrateValue(video?.constantBitRate?.[0]);
+            const vbrUpperCapData = getBitrateValue(video?.vbrUpperCap?.[0]);
+            
+            // Helper to extract GovLength with attributes
+            const getGovLengthValue = (field: string | { _: string; $: { min: string; max: string } } | undefined) => {
+                if (!field) return { value: 0, min: 1, max: 400 };
+                if (typeof field === 'string') return { value: Number(field), min: 1, max: 400 };
+                return {
+                    value: Number(field._ || 0),
+                    min: Number(field.$.min || 1),
+                    max: Number(field.$.max || 400)
+                };
+            };
+            
+            // Use GovLength (frame-based GOP)
+            const govLength = video?.GovLength?.[0];
+            const govLengthData = getGovLengthValue(govLength);
+            
+            return {
+                id: channel.id?.[0],
+                channelName: channel.channelName?.[0],
+                enabled: channel.enabled?.[0] === 'true',
+                video: {
+                    enabled: video?.enabled?.[0] === 'true',
+                    videoCodecType: video?.videoCodecType?.[0],
+                    videoResolutionWidth: Number(video?.videoResolutionWidth?.[0]),
+                    videoResolutionHeight: Number(video?.videoResolutionHeight?.[0]),
+                    maxFrameRate: Number(video?.maxFrameRate?.[0]),
+                    maxFrameRateUI: formatFrameRate(Number(video?.maxFrameRate?.[0])),
+                    videoQualityControlType: video?.videoQualityControlType?.[0] as 'VBR' | 'CBR',
+                    constantBitRate: constantBitRateData.value,
+                    constantBitRateMin: constantBitRateData.min,
+                    constantBitRateMax: constantBitRateData.max,
+                    vbrUpperCap: vbrUpperCapData.value,
+                    vbrUpperCapMin: vbrUpperCapData.min,
+                    vbrUpperCapMax: vbrUpperCapData.max,
+                    fixedQuality: Number(video?.fixedQuality?.[0]),
+                    govLength: govLengthData.value,
+                    govLengthMin: govLengthData.min,
+                    govLengthMax: govLengthData.max,
+                    govLengthUI: formatKeyFrameInterval(
+                        govLengthData.value,
+                        Number(video?.maxFrameRate?.[0])
+                    ),
+                    smoothing: Number(video?.smoothing?.[0]),
+                    H264Profile: video?.H264Profile?.[0],
+                    H265Profile: video?.H265Profile?.[0],
+                }
+            };
+        }) || [];
+
+        return { xml: response.body, json, channels };
+    }
+
+    async updateStreamingChannel(params: StreamingChannelUpdateParams) {
+        const { 
+            channelId,
+            videoCodecType, 
+            videoResolutionWidth, 
+            videoResolutionHeight, 
+            maxFrameRate, 
+            vbrUpperCap, 
+            constantBitRate,
+            govLength,
+            fixedQuality,
+            videoQualityControlType,
+            smoothing,
+            H264Profile,
+            H265Profile
+        } = params;
+        let { xml } = await this.getStreamingChannels();
+
+        // Use channelId from params or fallback to this.channel
+        const targetChannel = channelId || this.channel;
+
+        // Find the specific channel section in the XML
+        const channelRegex = new RegExp(`(<StreamingChannel[^>]*>[\\s\\S]*?<id>${targetChannel}<\\/id>[\\s\\S]*?<\\/StreamingChannel>)`, 'g');
+        
+        xml = xml.replace(channelRegex, (match) => {
+            let updatedChannel = match;
+
+            if (videoCodecType !== undefined) {
+                updatedChannel = updatedChannel.replace(/<videoCodecType[^>]*>.*?<\/videoCodecType>/s, `<videoCodecType>${videoCodecType}</videoCodecType>`);
+            }
+
+            if (videoResolutionWidth !== undefined) {
+                updatedChannel = updatedChannel.replace(/<videoResolutionWidth[^>]*>.*?<\/videoResolutionWidth>/s, `<videoResolutionWidth>${videoResolutionWidth}</videoResolutionWidth>`);
+            }
+
+            if (videoResolutionHeight !== undefined) {
+                updatedChannel = updatedChannel.replace(/<videoResolutionHeight[^>]*>.*?<\/videoResolutionHeight>/s, `<videoResolutionHeight>${videoResolutionHeight}</videoResolutionHeight>`);
+            }
+
+            if (maxFrameRate !== undefined) {
+                updatedChannel = updatedChannel.replace(/<maxFrameRate[^>]*>.*?<\/maxFrameRate>/s, `<maxFrameRate>${maxFrameRate}</maxFrameRate>`);
+            }
+
+            if (vbrUpperCap !== undefined) {
+                updatedChannel = updatedChannel.replace(/<vbrUpperCap[^>]*>.*?<\/vbrUpperCap>/s, `<vbrUpperCap>${vbrUpperCap}</vbrUpperCap>`);
+            }
+
+            if (constantBitRate !== undefined) {
+                updatedChannel = updatedChannel.replace(/<constantBitRate[^>]*>.*?<\/constantBitRate>/s, `<constantBitRate>${constantBitRate}</constantBitRate>`);
+            }
+
+            if (govLength !== undefined) {
+                updatedChannel = updatedChannel.replace(
+                    /<GovLength(\s+[^>]*)?>.*?<\/GovLength>/s,
+                    (fullMatch, attributes) => {
+                        const attrs = attributes || '';
+                        return `<GovLength${attrs}>${govLength}</GovLength>`;
+                    }
+                );
+            }
+
+            if (fixedQuality !== undefined) {
+                updatedChannel = updatedChannel.replace(/<fixedQuality[^>]*>.*?<\/fixedQuality>/s, `<fixedQuality>${fixedQuality}</fixedQuality>`);
+            }
+
+            if (videoQualityControlType !== undefined) {
+                updatedChannel = updatedChannel.replace(/<videoQualityControlType[^>]*>.*?<\/videoQualityControlType>/s, `<videoQualityControlType>${videoQualityControlType}</videoQualityControlType>`);
+            }
+
+            if (smoothing !== undefined) {
+                updatedChannel = updatedChannel.replace(/<smoothing[^>]*>.*?<\/smoothing>/s, `<smoothing>${smoothing}</smoothing>`);
+            }
+
+            if (H264Profile !== undefined) {
+                updatedChannel = updatedChannel.replace(/<H264Profile[^>]*>.*?<\/H264Profile>/s, `<H264Profile>${H264Profile}</H264Profile>`);
+            }
+
+            if (H265Profile !== undefined) {
+                updatedChannel = updatedChannel.replace(/<H265Profile[^>]*>.*?<\/H265Profile>/s, `<H265Profile>${H265Profile}</H265Profile>`);
+            }
+
+            return updatedChannel;
+        });
+
+        const response = await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/Streaming/channels/${targetChannel}`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+            body: xml,
+        });
+
+        return response;
+    }
+
+    async getStreamingChannelCapabilities(channelId: string) {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/Streaming/channels/${channelId}/dynamicCap`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body) as DynamicCapRoot;
+        const data = json.DynamicCap;
+
+        // Parse resolutions and frame rates
+        const resolutions = data.ResolutionAvailableDscriptorList?.[0]?.ResolutionAvailableDscriptor?.map(desc => ({
+            width: Number(desc.videoResolutionWidth?.[0]),
+            height: Number(desc.videoResolutionHeight?.[0]),
+            frameRates: desc.supportedFrameRate?.[0]?.split(',').map(fr => {
+                const value = Number(fr);
+                return {
+                    value,
+                    label: formatFrameRate(value)
+                };
+            }) || []
+        })) || [];
+
+        // Parse video codecs with detailed capabilities
+        const videoCodecs = data.CodecParamDscriptorList?.[0]?.CodecParamDscriptor?.map(codec => ({
+            type: codec.videoCodecType?.[0],
+            supportProfile: codec.isSupportProfile?.[0] === 'true',
+            supportSVC: codec.isSupportSVC?.[0] === 'true',
+            cbrSupported: codec.CBRCap?.[0]?.isSupportSmooth?.[0] === 'true',
+            vbrSupported: codec.VBRCap?.[0]?.isSupportSmooth?.[0] === 'true',
+            smartCodecCap: codec.SmartCodecCap?.[0] ? {
+                readOnlyParams: codec.SmartCodecCap[0].readOnlyParams?.[0]?.$?.opt?.split(',') || [],
+                constantBitrateSupport: codec.SmartCodecCap[0].BitrateType?.[0]?.Constant?.[0]?.support?.[0]?.$?.opt?.split(',') || [],
+                variableBitrateSupport: codec.SmartCodecCap[0].BitrateType?.[0]?.Variable?.[0]?.support?.[0]?.$?.opt?.split(',') || []
+            } : undefined
+        })) || [];
+
+        // Extract all available frame rates across all resolutions
+        const allFrameRates = [...new Set(
+            resolutions.flatMap(r => r.frameRates.map(fr => fr.value))
+        )].sort((a, b) => b - a).map(value => ({
+            value,
+            label: formatFrameRate(value)
+        }));
+
+        // Get quality control types from codec capabilities
+        const qualityControlTypes: ('VBR' | 'CBR')[] = [];
+        videoCodecs.forEach(codec => {
+            if (codec.vbrSupported && !qualityControlTypes.includes('VBR')) {
+                qualityControlTypes.push('VBR');
+            }
+            if (codec.cbrSupported && !qualityControlTypes.includes('CBR')) {
+                qualityControlTypes.push('CBR');
+            }
+        });
+
+        return {
+            resolutions,
+            videoCodecs,
+            allFrameRates,
+            qualityControlTypes,
+        };
+    }
+
+    async getStreamingCapabilities() {
+        const { channels } = await this.getStreamingChannels();
+        
+        // Get capabilities for each channel
+        const channelsWithCapabilities = await Promise.all(
+            channels.map(async (channel) => {
+                const capabilities = await this.getStreamingChannelCapabilities(channel.id);
+                return {
+                    ...channel,
+                    capabilities
+                };
+            })
+        );
+
+        return channelsWithCapabilities;
     }
 }
