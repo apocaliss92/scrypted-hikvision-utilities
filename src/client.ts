@@ -639,4 +639,101 @@ export class HikvisionCameraAPI {
 
         return response;
     }
+
+    async getMotionEventTrigger() {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/Event/triggers/VMD-1`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        });
+
+        const data = json.EventTrigger;
+        const notificationList = data.EventTriggerNotificationList?.[0]?.EventTriggerNotification || [];
+        
+        // Check if center notification exists
+        const hasCenterNotification = notificationList.some((notification: any) => 
+            notification.notificationMethod?.[0] === 'center'
+        );
+
+        return {
+            xml: response.body,
+            centerNotificationEnabled: hasCenterNotification,
+        };
+    }
+
+    async updateMotionEventTrigger(params: {
+        centerNotificationEnabled?: boolean;
+    }) {
+        let { xml } = await this.getMotionEventTrigger();
+
+        if (params.centerNotificationEnabled !== undefined) {
+            // Parse the XML to manipulate the notification list
+            const json = await xml2js.parseStringPromise(xml, {
+                explicitArray: true,
+                mergeAttrs: false,
+                attrkey: '$',
+                charkey: '_'
+            });
+
+            const notificationList = json.EventTrigger.EventTriggerNotificationList?.[0]?.EventTriggerNotification || [];
+            
+            // Filter out center notification
+            const filteredList = notificationList.filter((notification: any) => 
+                notification.notificationMethod?.[0] !== 'center'
+            );
+
+            // Add center notification if enabled
+            if (params.centerNotificationEnabled) {
+                filteredList.push({
+                    id: ['center'],
+                    notificationMethod: ['center'],
+                });
+            }
+
+            // Update the notification list
+            if (!json.EventTrigger.EventTriggerNotificationList) {
+                json.EventTrigger.EventTriggerNotificationList = [{}];
+            }
+            json.EventTrigger.EventTriggerNotificationList[0].EventTriggerNotification = filteredList;
+
+            // Remove unwanted fields
+            delete json.EventTrigger.$.version;
+            delete json.EventTrigger.$.xmlns;
+            delete json.EventTrigger.eventDescription;
+            delete json.EventTrigger.dynVideoInputChannelID;
+            
+            // Remove notificationRecurrence from all notifications
+            filteredList.forEach((notification: any) => {
+                delete notification.notificationRecurrence;
+            });
+
+            // Build XML back
+            const builder = new xml2js.Builder({
+                headless: false,
+                renderOpts: { pretty: false }
+            });
+            xml = builder.buildObject(json);
+        }
+
+        const response = await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/Event/triggers/VMD-1`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+            body: xml,
+        });
+
+        return response;
+    }
 }

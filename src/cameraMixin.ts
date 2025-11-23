@@ -58,6 +58,8 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     async fetchMotionCapabilities() {
         const client = await this.getClient();
         this.motionCaps = await client.getMotionCapabilities();
+        const eventTrigger = await client.getMotionEventTrigger();
+        this.motionCaps.centerNotificationEnabled = eventTrigger.centerNotificationEnabled;
     }
 
     async fetchAudioCapabilities() {
@@ -102,6 +104,21 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
             onPut: async (old: string, value: string) => {
                 if (old !== value && old !== undefined) {
                     await this.updateMotionDetection({ motionSensitivity: value });
+                }
+            }
+        });
+
+        // Center Notification setting
+        motionSettings.push({
+            key: 'motionCenterNotification',
+            title: 'Send to Notification Center',
+            description: 'Enable notifications to surveillance center',
+            subgroup: 'Motion',
+            type: 'boolean',
+            immediate: true,
+            onPut: async (old: boolean, value: boolean) => {
+                if (old !== value && old !== undefined) {
+                    await this.updateMotionEventTrigger({ centerNotificationEnabled: value });
                 }
             }
         });
@@ -641,6 +658,9 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
 
         // Set motion sensitivity value
         this.storageSettings.values['motionSensitivity'] = String(this.motionCaps.sensitivityLevel);
+
+        // Set center notification enabled value
+        this.storageSettings.values['motionCenterNotification'] = this.motionCaps.centerNotificationEnabled;
     }
 
     setStreamSettingsValues(streamCaps: any[]) {
@@ -813,6 +833,13 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         }
         this.console.log('Updating motion detection with params:', props);
         await client.updateMotionDetection(props);
+    }
+
+    async updateMotionEventTrigger({ centerNotificationEnabled }: { centerNotificationEnabled?: boolean }) {
+        const client = await this.getClient();
+
+        this.console.log('Updating motion event trigger with params:', { centerNotificationEnabled });
+        await client.updateMotionEventTrigger({ centerNotificationEnabled });
     }
 
     async release() {
