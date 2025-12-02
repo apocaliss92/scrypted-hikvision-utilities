@@ -17,6 +17,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     ptzCaps: any = null;
     ptzPresets: any[] = [];
     deviceInfo: any = null;
+    suppressOnPut = false;
 
     initStorage: StorageSettingsDict<string> = {}
 
@@ -692,12 +693,39 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         return timeSettings;
     }
 
+    getOSDPositionPresets(width: number, height: number) {
+        const padding = 0;
+        const lineHeight = 60; // User specified 40
+        const textWidth = 220; // Approximate width
+
+        // Coordinate system: 0,0 is Bottom-Left. 0,Height is Top-Left.
+        return {
+            'Top Left 1': { x: padding, y: height - padding },
+            'Top Left 2': { x: padding, y: height - padding - lineHeight },
+            'Top Left 3': { x: padding, y: height - padding - lineHeight * 2 },
+            'Top Right 1': { x: width - textWidth - padding, y: height - padding },
+            'Top Right 2': { x: width - textWidth - padding, y: height - padding - lineHeight },
+            'Top Right 3': { x: width - textWidth - padding, y: height - padding - lineHeight * 2 },
+            'Bottom Left 1': { x: padding, y: padding },
+            'Bottom Left 2': { x: padding, y: padding + lineHeight },
+            'Bottom Left 3': { x: padding, y: padding + lineHeight * 2 },
+            'Bottom Right 1': { x: width - textWidth - padding, y: padding },
+            'Bottom Right 2': { x: width - textWidth - padding, y: padding + lineHeight },
+            'Bottom Right 3': { x: width - textWidth - padding, y: padding + lineHeight * 2 },
+        };
+    }
+
     generateOSDSettings() {
         const osdSettings: StorageSetting[] = [];
 
         if (!this.osdCaps) {
             return osdSettings;
         }
+
+        const width = this.osdCaps.normalizedScreenWidth || 704;
+        const height = this.osdCaps.normalizedScreenHeight || 576;
+        const presets = this.getOSDPositionPresets(width, height);
+        const presetChoices = Object.keys(presets);
 
         // Date/Time Overlay
         osdSettings.push({
@@ -756,12 +784,44 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
             });
 
             osdSettings.push({
+                key: 'osdDateTimePositionPreset',
+                title: 'Date/Time Position Preset',
+                subgroup: 'OSD',
+                type: 'string',
+                choices: presetChoices,
+                immediate: true,
+                onPut: async (old: string, value: string) => {
+                    if (old !== value && old !== undefined) {
+                        const pos = presets[value as keyof typeof presets];
+                        if (pos) {
+                            this.suppressOnPut = true;
+                            try {
+                                this.storageSettings.values['osdDateTimeX'] = pos.x;
+                                this.storageSettings.values['osdDateTimeY'] = pos.y;
+                                await this.updateOSD({ dateTimeOverlay: { positionX: pos.x, positionY: pos.y } });
+                                
+                                // Update local cache
+                                if (this.osdCaps && this.osdCaps.dateTimeOverlay) {
+                                    this.osdCaps.dateTimeOverlay.positionX = [String(pos.x)];
+                                    this.osdCaps.dateTimeOverlay.positionY = [String(pos.y)];
+                                }
+                            } finally {
+                                this.suppressOnPut = false;
+                            }
+                            await this.refreshSettings();
+                        }
+                    }
+                }
+            });
+
+            osdSettings.push({
                 key: 'osdDateTimeX',
                 title: 'Date/Time X Position',
                 subgroup: 'OSD',
                 type: 'number',
                 immediate: false,
                 onPut: async (old: number, value: number) => {
+                    if (this.suppressOnPut) return;
                     if (old !== value && old !== undefined) {
                         await this.updateOSD({ dateTimeOverlay: { positionX: value } });
                     }
@@ -775,6 +835,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                 type: 'number',
                 immediate: false,
                 onPut: async (old: number, value: number) => {
+                    if (this.suppressOnPut) return;
                     if (old !== value && old !== undefined) {
                         await this.updateOSD({ dateTimeOverlay: { positionY: value } });
                     }
@@ -817,12 +878,44 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
             });
 
             osdSettings.push({
+                key: 'osdChannelNamePositionPreset',
+                title: 'Channel Name Position Preset',
+                subgroup: 'OSD',
+                type: 'string',
+                choices: presetChoices,
+                immediate: true,
+                onPut: async (old: string, value: string) => {
+                    if (old !== value && old !== undefined) {
+                        const pos = presets[value as keyof typeof presets];
+                        if (pos) {
+                            this.suppressOnPut = true;
+                            try {
+                                this.storageSettings.values['osdChannelNameX'] = pos.x;
+                                this.storageSettings.values['osdChannelNameY'] = pos.y;
+                                await this.updateOSD({ channelNameOverlay: { positionX: pos.x, positionY: pos.y } });
+                                
+                                // Update local cache
+                                if (this.osdCaps && this.osdCaps.channelNameOverlay) {
+                                    this.osdCaps.channelNameOverlay.positionX = [String(pos.x)];
+                                    this.osdCaps.channelNameOverlay.positionY = [String(pos.y)];
+                                }
+                            } finally {
+                                this.suppressOnPut = false;
+                            }
+                            await this.refreshSettings();
+                        }
+                    }
+                }
+            });
+
+            osdSettings.push({
                 key: 'osdChannelNameX',
                 title: 'Channel Name X Position',
                 subgroup: 'OSD',
                 type: 'number',
                 immediate: false,
                 onPut: async (old: number, value: number) => {
+                    if (this.suppressOnPut) return;
                     if (old !== value && old !== undefined) {
                         await this.updateOSD({ channelNameOverlay: { positionX: value } });
                     }
@@ -836,6 +929,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                 type: 'number',
                 immediate: false,
                 onPut: async (old: number, value: number) => {
+                    if (this.suppressOnPut) return;
                     if (old !== value && old !== undefined) {
                         await this.updateOSD({ channelNameOverlay: { positionY: value } });
                     }
@@ -877,12 +971,47 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                 });
 
                 osdSettings.push({
+                    key: `osdText${id}PositionPreset`,
+                    title: `Text Overlay ${id} Position Preset`,
+                    subgroup: 'OSD',
+                    type: 'string',
+                    choices: presetChoices,
+                    immediate: true,
+                    onPut: async (old: string, value: string) => {
+                        if (old !== value && old !== undefined) {
+                            const pos = presets[value as keyof typeof presets];
+                            if (pos) {
+                                this.suppressOnPut = true;
+                                try {
+                                    this.storageSettings.values[`osdText${id}X`] = pos.x;
+                                    this.storageSettings.values[`osdText${id}Y`] = pos.y;
+                                    await this.updateOSD({ textOverlays: [{ id, positionX: pos.x, positionY: pos.y }] });
+                                    
+                                    // Update local cache
+                                    if (this.osdCaps && this.osdCaps.textOverlayList) {
+                                        const overlay = this.osdCaps.textOverlayList.find((t: any) => t.id?.[0] === id);
+                                        if (overlay) {
+                                            overlay.positionX = [String(pos.x)];
+                                            overlay.positionY = [String(pos.y)];
+                                        }
+                                    }
+                                } finally {
+                                    this.suppressOnPut = false;
+                                }
+                                await this.refreshSettings();
+                            }
+                        }
+                    }
+                });
+
+                osdSettings.push({
                     key: `osdText${id}X`,
                     title: `Text Overlay ${id} X`,
                     subgroup: 'OSD',
                     type: 'number',
                     immediate: false,
                     onPut: async (old: number, value: number) => {
+                        if (this.suppressOnPut) return;
                         if (old !== value && old !== undefined) {
                             await this.updateOSD({ textOverlays: [{ id, positionX: value }] });
                         }
@@ -896,6 +1025,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                     type: 'number',
                     immediate: false,
                     onPut: async (old: number, value: number) => {
+                        if (this.suppressOnPut) return;
                         if (old !== value && old !== undefined) {
                             await this.updateOSD({ textOverlays: [{ id, positionY: value }] });
                         }

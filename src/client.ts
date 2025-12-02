@@ -783,6 +783,8 @@ export class HikvisionCameraAPI {
 
         return {
             xml: response.body,
+            normalizedScreenWidth: Number(data.normalizedScreenSize?.[0]?.normalizedScreenWidth?.[0] || 704),
+            normalizedScreenHeight: Number(data.normalizedScreenSize?.[0]?.normalizedScreenHeight?.[0] || 576),
             textOverlayList: data.TextOverlayList?.[0]?.TextOverlay || [],
             dateTimeOverlay: data.DateTimeOverlay?.[0],
             channelNameOverlay: data.channelNameOverlay?.[0],
