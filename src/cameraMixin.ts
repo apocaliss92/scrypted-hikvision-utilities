@@ -13,6 +13,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     motionCaps: any = null;
     audioCaps: any = null;
     timeCaps: any = null;
+    osdCaps: any = null;
 
     initStorage: StorageSettingsDict<string> = {}
 
@@ -30,6 +31,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         await this.fetchStreamCapabilities();
         await this.fetchAudioCapabilities();
         await this.fetchTimeCapabilities();
+        await this.fetchOSDCapabilities();
 
         await this.refreshSettings();
         await this.refreshSettings();
@@ -55,6 +57,11 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         this.setTimeSettingsValues();
     }
 
+    async updateOSDCapabilities() {
+        await this.fetchOSDCapabilities();
+        this.setOSDSettingsValues();
+    }
+
     async fetchMotionCapabilities() {
         const client = await this.getClient();
         this.motionCaps = await client.getMotionCapabilities();
@@ -70,6 +77,13 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     async fetchTimeCapabilities() {
         const client = await this.getClient();
         this.timeCaps = await client.getTimeCapabilities();
+    }
+
+    async fetchOSDCapabilities() {
+        const client = await this.getClient();
+        const caps = await client.getOSDCapabilities();
+        const current = await client.getOSD();
+        this.osdCaps = { ...caps, ...current };
     }
 
     generateMotionSettings() {
@@ -650,6 +664,160 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         return timeSettings;
     }
 
+    generateOSDSettings() {
+        const osdSettings: StorageSetting[] = [];
+
+        if (!this.osdCaps) {
+            return osdSettings;
+        }
+
+        // Date/Time Overlay
+        osdSettings.push({
+            key: 'osdDateTimeEnabled',
+            title: 'Show Date/Time',
+            subgroup: 'OSD',
+            type: 'boolean',
+            immediate: true,
+            onPut: async (old: boolean, value: boolean) => {
+                if (old !== value && old !== undefined) {
+                    await this.updateOSD({ dateTimeOverlay: { enabled: value } });
+                }
+            }
+        });
+
+        if (this.storageSettings.values['osdDateTimeEnabled']) {
+            osdSettings.push({
+                key: 'osdDateStyle',
+                title: 'Date Format',
+                subgroup: 'OSD',
+                type: 'string',
+                choices: ['YYYY-MM-DD', 'MM-DD-YYYY', 'DD-MM-YYYY'],
+                immediate: true,
+                onPut: async (old: string, value: string) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateOSD({ dateTimeOverlay: { dateStyle: value } });
+                    }
+                }
+            });
+
+            osdSettings.push({
+                key: 'osdTimeStyle',
+                title: 'Time Format',
+                subgroup: 'OSD',
+                type: 'string',
+                choices: ['12hour', '24hour'],
+                immediate: true,
+                onPut: async (old: string, value: string) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateOSD({ dateTimeOverlay: { timeStyle: value } });
+                    }
+                }
+            });
+
+            osdSettings.push({
+                key: 'osdDisplayWeek',
+                title: 'Show Week Day',
+                subgroup: 'OSD',
+                type: 'boolean',
+                immediate: true,
+                onPut: async (old: boolean, value: boolean) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateOSD({ dateTimeOverlay: { displayWeek: value } });
+                    }
+                }
+            });
+        }
+
+        // Channel Name Overlay
+        osdSettings.push({
+            key: 'osdChannelNameEnabled',
+            title: 'Show Channel Name',
+            subgroup: 'OSD',
+            type: 'boolean',
+            immediate: true,
+            onPut: async (old: boolean, value: boolean) => {
+                if (old !== value && old !== undefined) {
+                    await this.updateOSD({ channelNameOverlay: { enabled: value } });
+                }
+            }
+        });
+
+        // Text Overlays
+        const maxTextOverlays = this.osdCaps.textOverlayListSize || 8;
+        for (let i = 1; i <= maxTextOverlays; i++) {
+            const id = String(i);
+            osdSettings.push({
+                key: `osdText${id}Enabled`,
+                title: `Text Overlay ${id} Enabled`,
+                subgroup: 'OSD',
+                type: 'boolean',
+                immediate: true,
+                onPut: async (old: boolean, value: boolean) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateOSD({ textOverlays: [{ id, enabled: value }] });
+                        await this.updateOSDCapabilities();
+                        await this.refreshSettings();
+                    }
+                }
+            });
+
+            if (this.storageSettings.values[`osdText${id}Enabled`]) {
+                osdSettings.push({
+                    key: `osdText${id}Content`,
+                    title: `Text Overlay ${id} Content`,
+                    subgroup: 'OSD',
+                    type: 'string',
+                    immediate: true,
+                    onPut: async (old: string, value: string) => {
+                        if (old !== value && old !== undefined) {
+                            await this.updateOSD({ textOverlays: [{ id, displayText: value }] });
+                        }
+                    }
+                });
+
+                osdSettings.push({
+                    key: `osdText${id}X`,
+                    title: `Text Overlay ${id} X`,
+                    subgroup: 'OSD',
+                    type: 'number',
+                    immediate: true,
+                    onPut: async (old: number, value: number) => {
+                        if (old !== value && old !== undefined) {
+                            await this.updateOSD({ textOverlays: [{ id, positionX: value }] });
+                        }
+                    }
+                });
+
+                osdSettings.push({
+                    key: `osdText${id}Y`,
+                    title: `Text Overlay ${id} Y`,
+                    subgroup: 'OSD',
+                    type: 'number',
+                    immediate: true,
+                    onPut: async (old: number, value: number) => {
+                        if (old !== value && old !== undefined) {
+                            await this.updateOSD({ textOverlays: [{ id, positionY: value }] });
+                        }
+                    }
+                });
+            }
+        }
+
+        // Refetch button
+        osdSettings.push({
+            key: 'refetchOSD',
+            title: 'Refetch OSD Settings',
+            subgroup: 'OSD',
+            type: 'button',
+            onPut: async () => {
+                await this.updateOSDCapabilities();
+                await this.refreshSettings();
+            }
+        });
+
+        return osdSettings;
+    }
+
     setMotionSettingsValues() {
         if (!this.motionCaps) return;
 
@@ -784,6 +952,35 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         this.storageSettings.values['daylightSaving'] = hasDST;
     }
 
+    setOSDSettingsValues() {
+        if (!this.osdCaps) return;
+
+        const { dateTimeOverlay, channelNameOverlay, textOverlayList } = this.osdCaps;
+
+        if (dateTimeOverlay) {
+            this.storageSettings.values['osdDateTimeEnabled'] = dateTimeOverlay.enabled?.[0] === 'true';
+            this.storageSettings.values['osdDateStyle'] = dateTimeOverlay.dateStyle?.[0];
+            this.storageSettings.values['osdTimeStyle'] = dateTimeOverlay.timeStyle?.[0];
+            this.storageSettings.values['osdDisplayWeek'] = dateTimeOverlay.displayWeek?.[0] === 'true';
+        }
+
+        if (channelNameOverlay) {
+            this.storageSettings.values['osdChannelNameEnabled'] = channelNameOverlay.enabled?.[0] === 'true';
+        }
+
+        if (textOverlayList) {
+            for (const overlay of textOverlayList) {
+                const id = overlay.id?.[0];
+                if (id) {
+                    this.storageSettings.values[`osdText${id}Enabled`] = overlay.enabled?.[0] === 'true';
+                    this.storageSettings.values[`osdText${id}Content`] = overlay.displayText?.[0] || '';
+                    this.storageSettings.values[`osdText${id}X`] = Number(overlay.positionX?.[0]);
+                    this.storageSettings.values[`osdText${id}Y`] = Number(overlay.positionY?.[0]);
+                }
+            }
+        }
+    }
+
     async updateStreamingChannel(streamId: string, params: Partial<any>) {
         const client = await this.getClient();
 
@@ -822,6 +1019,12 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         this.console.log('Updating NTP server with params:', JSON.stringify(params, null, 2));
 
         await client.updateNTPServer(params);
+    }
+
+    async updateOSD(params: any) {
+        const client = await this.getClient();
+        this.console.log('Updating OSD with params:', JSON.stringify(params, null, 2));
+        await client.updateOSD(params);
     }
 
     async updateMotionDetection({ enabled, motionSensitivity }: Partial<MotionDetectionUpdateParams>) {
@@ -889,6 +1092,9 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         const timeSettings = this.generateTimeSettings();
         dynamicSettings.push(...timeSettings);
 
+        const osdSettings = this.generateOSDSettings();
+        dynamicSettings.push(...osdSettings);
+
         this.storageSettings = await convertSettingsToStorageSettings({
             device: this,
             dynamicSettings,
@@ -900,6 +1106,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         this.setStreamSettingsValues(this.streamCaps);
         this.setAudioSettingsValues();
         this.setTimeSettingsValues();
+        this.setOSDSettingsValues();
     }
 
     async getMixinSettings(): Promise<Setting[]> {

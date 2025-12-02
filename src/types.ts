@@ -242,3 +242,44 @@ export interface ResolutionAvailableDscriptor {
     videoResolutionHeight: string[];
     supportedFrameRate:    string[];
 }
+
+export interface VideoOverlay {
+    $: VersionXmlns;
+    normalizedScreenSize: NormalizedScreenSize[];
+    TextOverlayList: TextOverlayList[];
+    DateTimeOverlay: DateTimeOverlay[];
+    channelNameOverlay: ChannelNameOverlay[];
+}
+
+export interface NormalizedScreenSize {
+    normalizedScreenWidth: string[];
+    normalizedScreenHeight: string[];
+}
+
+export interface TextOverlayList {
+    $: { size: string };
+    TextOverlay: TextOverlay[];
+}
+
+export interface TextOverlay {
+    id: string[];
+    enabled: string[];
+    positionX: string[];
+    positionY: string[];
+    displayText: string[];
+}
+
+export interface DateTimeOverlay {
+    enabled: string[];
+    positionX: string[];
+    positionY: string[];
+    dateStyle: string[];
+    timeStyle: string[];
+    displayWeek: string[];
+}
+
+export interface ChannelNameOverlay {
+    enabled: string[];
+    positionX: string[];
+    positionY: string[];
+}

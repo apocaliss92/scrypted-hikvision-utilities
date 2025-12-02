@@ -736,4 +736,168 @@ export class HikvisionCameraAPI {
 
         return response;
     }
+
+    async getOSDCapabilities() {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/System/Video/inputs/channels/1/overlays/capabilities`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        });
+
+        const data = json.VideoOverlay;
+
+        return {
+            xml: response.body,
+            textOverlayListSize: Number(data.TextOverlayList?.[0]?.$?.size || 0),
+            dateTimeOverlay: data.DateTimeOverlay?.[0],
+            channelNameOverlay: data.channelNameOverlay?.[0],
+        };
+    }
+
+    async getOSD() {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/System/Video/inputs/channels/1/overlays`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        });
+
+        const data = json.VideoOverlay;
+
+        return {
+            xml: response.body,
+            textOverlayList: data.TextOverlayList?.[0]?.TextOverlay || [],
+            dateTimeOverlay: data.DateTimeOverlay?.[0],
+            channelNameOverlay: data.channelNameOverlay?.[0],
+        };
+    }
+
+    async updateOSD(params: {
+        dateTimeOverlay?: {
+            enabled?: boolean;
+            dateStyle?: string;
+            timeStyle?: string;
+            displayWeek?: boolean;
+            positionX?: number;
+            positionY?: number;
+        };
+        channelNameOverlay?: {
+            enabled?: boolean;
+            positionX?: number;
+            positionY?: number;
+        };
+        textOverlays?: {
+            id: string;
+            enabled?: boolean;
+            displayText?: string;
+            positionX?: number;
+            positionY?: number;
+        }[];
+    }) {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/System/Video/inputs/channels/1/overlays`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        });
+
+        const videoOverlay = json.VideoOverlay;
+
+        if (params.dateTimeOverlay) {
+            const dto = videoOverlay.DateTimeOverlay?.[0];
+            if (dto) {
+                if (params.dateTimeOverlay.enabled !== undefined) dto.enabled = [String(params.dateTimeOverlay.enabled)];
+                if (params.dateTimeOverlay.dateStyle !== undefined) dto.dateStyle = [params.dateTimeOverlay.dateStyle];
+                if (params.dateTimeOverlay.timeStyle !== undefined) dto.timeStyle = [params.dateTimeOverlay.timeStyle];
+                if (params.dateTimeOverlay.displayWeek !== undefined) dto.displayWeek = [String(params.dateTimeOverlay.displayWeek)];
+                if (params.dateTimeOverlay.positionX !== undefined) dto.positionX = [String(params.dateTimeOverlay.positionX)];
+                if (params.dateTimeOverlay.positionY !== undefined) dto.positionY = [String(params.dateTimeOverlay.positionY)];
+            }
+        }
+
+        if (params.channelNameOverlay) {
+            const cno = videoOverlay.channelNameOverlay?.[0];
+            if (cno) {
+                if (params.channelNameOverlay.enabled !== undefined) cno.enabled = [String(params.channelNameOverlay.enabled)];
+                if (params.channelNameOverlay.positionX !== undefined) cno.positionX = [String(params.channelNameOverlay.positionX)];
+                if (params.channelNameOverlay.positionY !== undefined) cno.positionY = [String(params.channelNameOverlay.positionY)];
+            }
+        }
+
+        if (params.textOverlays) {
+            const textList = videoOverlay.TextOverlayList?.[0]?.TextOverlay || [];
+            
+            for (const update of params.textOverlays) {
+                let overlay = textList.find((t: any) => t.id?.[0] === update.id);
+                
+                if (!overlay) {
+                    overlay = {
+                        id: [update.id],
+                        enabled: ['false'],
+                        positionX: ['0'],
+                        positionY: ['0'],
+                        displayText: [''],
+                        isPersistentText: ['true']
+                    };
+                    textList.push(overlay);
+                }
+
+                if (update.enabled !== undefined) overlay.enabled = [String(update.enabled)];
+                if (update.displayText !== undefined) overlay.displayText = [update.displayText];
+                if (update.positionX !== undefined) overlay.positionX = [String(update.positionX)];
+                if (update.positionY !== undefined) overlay.positionY = [String(update.positionY)];
+            }
+            
+            if (!videoOverlay.TextOverlayList) {
+                videoOverlay.TextOverlayList = [{ $: { size: '8' }, TextOverlay: textList }];
+            } else {
+                videoOverlay.TextOverlayList[0].TextOverlay = textList;
+            }
+        }
+
+        delete videoOverlay.$.version;
+        delete videoOverlay.$.xmlns;
+
+        const builder = new xml2js.Builder({
+            headless: false,
+            renderOpts: { pretty: false }
+        });
+        const newXml = builder.buildObject(json);
+
+        return await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/System/Video/inputs/channels/1/overlays`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+            body: newXml,
+        });
+    }
 }
