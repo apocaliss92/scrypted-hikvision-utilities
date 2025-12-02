@@ -283,3 +283,26 @@ export interface ChannelNameOverlay {
     positionX: string[];
     positionY: string[];
 }
+
+export interface PTZChanelCap {
+    maxPresetNum: string[];
+    PresetNameCap: PresetNameCap[];
+}
+
+export interface PresetNameCap {
+    specialNo: SpecialNo[];
+}
+
+export interface SpecialNo {
+    $: { opt: string };
+}
+
+export interface PTZPresetList {
+    PTZPreset: PTZPreset[];
+}
+
+export interface PTZPreset {
+    id: string[];
+    presetName?: string[];
+    enabled?: string[];
+}

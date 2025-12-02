@@ -900,4 +900,191 @@ export class HikvisionCameraAPI {
             body: newXml,
         });
     }
+
+    async getPTZCapabilities() {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/PTZCtrl/channels/1/capabilities`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        });
+
+        const data = json.PTZChanelCap;
+        const specialNoOpt = data.PresetNameCap?.[0]?.specialNo?.[0]?.$?.opt || '';
+        const specialNos = specialNoOpt.split(',').map(Number);
+
+        return {
+            xml: response.body,
+            maxPresetNum: Number(data.maxPresetNum?.[0] || 0),
+            specialNos,
+        };
+    }
+
+    async getPTZPresets() {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/PTZCtrl/channels/1/presets`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        });
+
+        const data = json.PTZPresetList;
+        return data.PTZPreset || [];
+    }
+
+    async updatePTZPreset(id: string, name: string) {
+        const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<PTZPreset xmlns="http://www.isapi.org/ver20/XMLSchema" version="2.0">
+    <id>${id}</id>
+    <presetName>${name}</presetName>
+</PTZPreset>`;
+
+        return await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/PTZCtrl/channels/1/presets/${id}`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+            body: xml,
+        });
+    }
+
+    async deletePTZPreset(id: string) {
+        return await this.request({
+            method: 'DELETE',
+            url: `http://${this.ip}/ISAPI/PTZCtrl/channels/1/presets/${id}`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+    }
+
+    async gotoPTZPreset(id: string) {
+        return await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/PTZCtrl/channels/1/presets/${id}/goto`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+    }
+
+    async getDeviceInfo() {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/System/deviceInfo`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        });
+
+        const info = json.DeviceInfo || {};
+        return {
+            xml: response.body,
+            deviceName: info.deviceName?.[0],
+            model: info.model?.[0],
+            serialNumber: info.serialNumber?.[0],
+            macAddress: info.macAddress?.[0],
+            firmwareVersion: info.firmwareVersion?.[0],
+            firmwareReleasedDate: info.firmwareReleasedDate?.[0],
+            deviceType: info.deviceType?.[0],
+        };
+    }
+
+    async getVideoInputChannel() {
+        const channelId = String(this.channel?.[0] ?? 1);
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/System/Video/inputs/channels/${channelId}`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const json = await xml2js.parseStringPromise(response.body, {
+            explicitArray: true,
+            mergeAttrs: false,
+            attrkey: '$',
+            charkey: '_'
+        });
+
+        return {
+            xml: response.body,
+            id: json.VideoInputChannel?.id?.[0],
+            name: json.VideoInputChannel?.name?.[0],
+            videoFormat: json.VideoInputChannel?.videoFormat?.[0],
+        };
+    }
+
+    async updateVideoInputChannel(name: string) {
+        const { xml } = await this.getVideoInputChannel();
+        
+        // Use regex to replace name to preserve all other fields and structure
+        let newXml = xml;
+        if (newXml.includes('<name>')) {
+            newXml = newXml.replace(/<name>.*?<\/name>/, `<name>${name}</name>`);
+        } else {
+            newXml = newXml.replace('</VideoInputChannel>', `  <name>${name}</name>\n</VideoInputChannel>`);
+        }
+
+        const channelId = String(this.channel?.[0] ?? 1);
+        return await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/System/Video/inputs/channels/${channelId}`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+            body: newXml,
+        });
+    }
+
+    async updateDeviceInfo(deviceName: string) {
+        let { xml } = await this.getDeviceInfo();
+        
+        // Use regex to replace deviceName to preserve all other fields and structure
+        // This avoids issues with "unusual parameters" or complex XML structures
+        if (xml.includes('<deviceName>')) {
+            xml = xml.replace(/<deviceName>.*?<\/deviceName>/, `<deviceName>${deviceName}</deviceName>`);
+        } else {
+            // Fallback if tag doesn't exist (unlikely for valid XML)
+            xml = xml.replace('</DeviceInfo>', `  <deviceName>${deviceName}</deviceName>\n</DeviceInfo>`);
+        }
+
+        return await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/System/deviceInfo`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+            body: xml,
+        });
+    }
 }

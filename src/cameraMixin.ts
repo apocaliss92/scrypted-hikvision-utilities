@@ -14,6 +14,9 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     audioCaps: any = null;
     timeCaps: any = null;
     osdCaps: any = null;
+    ptzCaps: any = null;
+    ptzPresets: any[] = [];
+    deviceInfo: any = null;
 
     initStorage: StorageSettingsDict<string> = {}
 
@@ -32,6 +35,8 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         await this.fetchAudioCapabilities();
         await this.fetchTimeCapabilities();
         await this.fetchOSDCapabilities();
+        await this.fetchPTZCapabilities();
+        await this.fetchDeviceInfo();
 
         await this.refreshSettings();
         await this.refreshSettings();
@@ -62,6 +67,11 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         this.setOSDSettingsValues();
     }
 
+    async updatePTZCapabilities() {
+        await this.fetchPTZCapabilities();
+        this.setPTZSettingsValues();
+    }
+
     async fetchMotionCapabilities() {
         const client = await this.getClient();
         this.motionCaps = await client.getMotionCapabilities();
@@ -83,7 +93,25 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         const client = await this.getClient();
         const caps = await client.getOSDCapabilities();
         const current = await client.getOSD();
-        this.osdCaps = { ...caps, ...current };
+        const videoInput = await client.getVideoInputChannel();
+        this.osdCaps = { ...caps, ...current, videoInputName: videoInput.name };
+    }
+
+    async fetchDeviceInfo() {
+        const client = await this.getClient();
+        this.deviceInfo = await client.getDeviceInfo();
+    }
+
+    async fetchPTZCapabilities() {
+        const client = await this.getClient();
+        try {
+            this.ptzCaps = await client.getPTZCapabilities();
+            this.ptzPresets = await client.getPTZPresets();
+        } catch (e) {
+            this.console.log('PTZ not supported or error fetching capabilities', e);
+            this.ptzCaps = null;
+            this.ptzPresets = [];
+        }
     }
 
     generateMotionSettings() {
@@ -527,7 +555,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                 description: 'IP address of NTP server',
                 subgroup: 'Time',
                 type: 'string',
-                immediate: true,
+                immediate: false,
                 onPut: async (old: string, value: string) => {
                     if (old !== value && old !== undefined) {
                         await this.updateNTPServer({
@@ -543,7 +571,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                 description: 'Port number of NTP server',
                 subgroup: 'Time',
                 type: 'number',
-                immediate: true,
+                immediate: false,
                 onPut: async (old: number, value: number) => {
                     if (old !== value && old !== undefined) {
                         await this.updateNTPServer({
@@ -726,6 +754,32 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                     }
                 }
             });
+
+            osdSettings.push({
+                key: 'osdDateTimeX',
+                title: 'Date/Time X Position',
+                subgroup: 'OSD',
+                type: 'number',
+                immediate: false,
+                onPut: async (old: number, value: number) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateOSD({ dateTimeOverlay: { positionX: value } });
+                    }
+                }
+            });
+
+            osdSettings.push({
+                key: 'osdDateTimeY',
+                title: 'Date/Time Y Position',
+                subgroup: 'OSD',
+                type: 'number',
+                immediate: false,
+                onPut: async (old: number, value: number) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateOSD({ dateTimeOverlay: { positionY: value } });
+                    }
+                }
+            });
         }
 
         // Channel Name Overlay
@@ -738,9 +792,56 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
             onPut: async (old: boolean, value: boolean) => {
                 if (old !== value && old !== undefined) {
                     await this.updateOSD({ channelNameOverlay: { enabled: value } });
+                    await this.updateOSDCapabilities();
+                    await this.refreshSettings();
                 }
             }
         });
+
+        if (this.storageSettings.values['osdChannelNameEnabled']) {
+            osdSettings.push({
+                key: 'osdChannelName',
+                title: 'Channel Name',
+                description: 'Updates the video input channel name which is used as channel name overlay',
+                subgroup: 'OSD',
+                type: 'string',
+                immediate: false,
+                onPut: async (old: string, value: string) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateVideoInputChannel(value);
+                        if (this.osdCaps) {
+                            this.osdCaps.videoInputName = value;
+                        }
+                    }
+                }
+            });
+
+            osdSettings.push({
+                key: 'osdChannelNameX',
+                title: 'Channel Name X Position',
+                subgroup: 'OSD',
+                type: 'number',
+                immediate: false,
+                onPut: async (old: number, value: number) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateOSD({ channelNameOverlay: { positionX: value } });
+                    }
+                }
+            });
+
+            osdSettings.push({
+                key: 'osdChannelNameY',
+                title: 'Channel Name Y Position',
+                subgroup: 'OSD',
+                type: 'number',
+                immediate: false,
+                onPut: async (old: number, value: number) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateOSD({ channelNameOverlay: { positionY: value } });
+                    }
+                }
+            });
+        }
 
         // Text Overlays
         const maxTextOverlays = this.osdCaps.textOverlayListSize || 8;
@@ -767,7 +868,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                     title: `Text Overlay ${id} Content`,
                     subgroup: 'OSD',
                     type: 'string',
-                    immediate: true,
+                    immediate: false,
                     onPut: async (old: string, value: string) => {
                         if (old !== value && old !== undefined) {
                             await this.updateOSD({ textOverlays: [{ id, displayText: value }] });
@@ -780,7 +881,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                     title: `Text Overlay ${id} X`,
                     subgroup: 'OSD',
                     type: 'number',
-                    immediate: true,
+                    immediate: false,
                     onPut: async (old: number, value: number) => {
                         if (old !== value && old !== undefined) {
                             await this.updateOSD({ textOverlays: [{ id, positionX: value }] });
@@ -793,7 +894,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                     title: `Text Overlay ${id} Y`,
                     subgroup: 'OSD',
                     type: 'number',
-                    immediate: true,
+                    immediate: false,
                     onPut: async (old: number, value: number) => {
                         if (old !== value && old !== undefined) {
                             await this.updateOSD({ textOverlays: [{ id, positionY: value }] });
@@ -816,6 +917,134 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         });
 
         return osdSettings;
+    }
+
+    generatePTZSettings() {
+        const ptzSettings: StorageSetting[] = [];
+
+        if (!this.ptzCaps) {
+            return ptzSettings;
+        }
+
+        const specialNos = this.ptzCaps.specialNos || [];
+        // Limit to 32 presets for UI sanity, or use maxPresetNum if smaller
+        const maxPresets = Math.min(this.ptzCaps.maxPresetNum || 32, 32);
+
+        for (let i = 1; i <= maxPresets; i++) {
+            if (specialNos.includes(i)) continue;
+
+            const id = String(i);
+
+            ptzSettings.push({
+                key: `ptzPreset${id}Enabled`,
+                title: `Preset ${id} Enabled`,
+                subgroup: 'PTZ',
+                type: 'boolean',
+                immediate: true,
+                onPut: async (old: boolean, value: boolean) => {
+                    if (old !== value && old !== undefined) {
+                        if (value) {
+                            // Enable: Create with default name if not exists
+                            const name = this.storageSettings.values[`ptzPreset${id}Name`] || `Preset ${id}`;
+                            await this.updatePTZPreset(id, name);
+                        } else {
+                            // Disable: Delete preset
+                            await this.deletePTZPreset(id);
+                        }
+                        await this.updatePTZCapabilities();
+                        await this.refreshSettings();
+                    }
+                }
+            });
+
+            if (this.storageSettings.values[`ptzPreset${id}Enabled`]) {
+                ptzSettings.push({
+                    key: `ptzPreset${id}Name`,
+                    title: `Preset ${id} Name`,
+                    description: 'Updating name also sets preset to CURRENT position',
+                    subgroup: 'PTZ',
+                    type: 'string',
+                    immediate: false,
+                    onPut: async (old: string, value: string) => {
+                        if (old !== value && old !== undefined) {
+                            await this.updatePTZPreset(id, value);
+                        }
+                    }
+                });
+
+                ptzSettings.push({
+                    key: `ptzPreset${id}Go`,
+                    title: `Go to Preset ${id}`,
+                    subgroup: 'PTZ',
+                    type: 'button',
+                    onPut: async () => {
+                        await this.gotoPTZPreset(id);
+                    }
+                });
+            }
+        }
+
+        // Refetch button
+        ptzSettings.push({
+            key: 'refetchPTZ',
+            title: 'Refetch PTZ Settings',
+            subgroup: 'PTZ',
+            type: 'button',
+            onPut: async () => {
+                await this.updatePTZCapabilities();
+                await this.refreshSettings();
+            }
+        });
+
+        return ptzSettings;
+    }
+
+    generateInfoSettings() {
+        const infoSettings: StorageSetting[] = [];
+
+        if (!this.deviceInfo) {
+            return infoSettings;
+        }
+
+        const infoFields = [
+            { key: 'deviceName', title: 'Device Name' },
+            { key: 'model', title: 'Model' },
+            { key: 'serialNumber', title: 'Serial Number' },
+            { key: 'firmwareVersion', title: 'Firmware Version' },
+            { key: 'firmwareReleasedDate', title: 'Firmware Date' },
+            { key: 'macAddress', title: 'MAC Address' },
+            { key: 'deviceType', title: 'Device Type' },
+        ];
+
+        for (const field of infoFields) {
+            if (field.key === 'deviceName') {
+                infoSettings.push({
+                    key: `info_${field.key}`,
+                    title: field.title,
+                    subgroup: 'Info',
+                    type: 'string',
+                    immediate: false,
+                    onPut: async (oldValue: string, newValue: string) => {
+                        const client = await this.getClient();
+                        await client.updateDeviceInfo(newValue);
+                        // Update local cache
+                        if (this.deviceInfo) {
+                            this.deviceInfo.deviceName = newValue;
+                        }
+                    }
+                });
+            } else {
+                infoSettings.push({
+                    key: `info_${field.key}`,
+                    title: field.title,
+                    subgroup: 'Info',
+                    type: 'string',
+                    readonly: true,
+                });
+            }
+        }
+
+        return infoSettings;
     }
 
     setMotionSettingsValues() {
@@ -929,7 +1158,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         if (timeConfig.timeMode === 'NTP' && ntpConfig) {
             this.storageSettings.values['ntpServer'] = ntpConfig.ipAddress;
             this.storageSettings.values['ntpPort'] = ntpConfig.portNo;
-            
+
             // Convert minutes to hours for display
             const minutes = ntpConfig.synchronizeInterval;
             const hours = Math.round(minutes / 60);
@@ -962,10 +1191,15 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
             this.storageSettings.values['osdDateStyle'] = dateTimeOverlay.dateStyle?.[0];
             this.storageSettings.values['osdTimeStyle'] = dateTimeOverlay.timeStyle?.[0];
             this.storageSettings.values['osdDisplayWeek'] = dateTimeOverlay.displayWeek?.[0] === 'true';
+            this.storageSettings.values['osdDateTimeX'] = Number(dateTimeOverlay.positionX?.[0] || 0);
+            this.storageSettings.values['osdDateTimeY'] = Number(dateTimeOverlay.positionY?.[0] || 0);
         }
 
         if (channelNameOverlay) {
             this.storageSettings.values['osdChannelNameEnabled'] = channelNameOverlay.enabled?.[0] === 'true';
+            this.storageSettings.values['osdChannelName'] = this.osdCaps.videoInputName || '';
+            this.storageSettings.values['osdChannelNameX'] = Number(channelNameOverlay.positionX?.[0] || 0);
+            this.storageSettings.values['osdChannelNameY'] = Number(channelNameOverlay.positionY?.[0] || 0);
         }
 
         if (textOverlayList) {
@@ -978,6 +1212,31 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                     this.storageSettings.values[`osdText${id}Y`] = Number(overlay.positionY?.[0]);
                 }
             }
+        }
+    }
+
+    setPTZSettingsValues() {
+        if (!this.ptzPresets) return;
+
+        for (const preset of this.ptzPresets) {
+            const id = preset.id?.[0];
+            if (id) {
+                this.storageSettings.values[`ptzPreset${id}Enabled`] = true;
+                this.storageSettings.values[`ptzPreset${id}Name`] = preset.presetName?.[0] || `Preset ${id}`;
+            }
+        }
+    }
+
+    setInfoSettingsValues() {
+        if (!this.deviceInfo) return;
+
+        const infoFields = [
+            'deviceName', 'model', 'serialNumber', 'firmwareVersion',
+            'firmwareReleasedDate', 'macAddress', 'deviceType'
+        ];
+
+        for (const field of infoFields) {
+            this.storageSettings.values[`info_${field}`] = this.deviceInfo[field] || '';
         }
     }
 
@@ -1025,6 +1284,30 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         const client = await this.getClient();
         this.console.log('Updating OSD with params:', JSON.stringify(params, null, 2));
         await client.updateOSD(params);
+    }
+
+    async updateVideoInputChannel(name: string) {
+        const client = await this.getClient();
+        this.console.log(`Updating video input channel name to: ${name}`);
+        await client.updateVideoInputChannel(name);
+    }
+
+    async updatePTZPreset(id: string, name: string) {
+        const client = await this.getClient();
+        this.console.log(`Updating PTZ preset ${id} with name: ${name}`);
+        await client.updatePTZPreset(id, name);
+    }
+
+    async deletePTZPreset(id: string) {
+        const client = await this.getClient();
+        this.console.log(`Deleting PTZ preset ${id}`);
+        await client.deletePTZPreset(id);
+    }
+
+    async gotoPTZPreset(id: string) {
+        const client = await this.getClient();
+        this.console.log(`Going to PTZ preset ${id}`);
+        await client.gotoPTZPreset(id);
     }
 
     async updateMotionDetection({ enabled, motionSensitivity }: Partial<MotionDetectionUpdateParams>) {
@@ -1080,6 +1363,9 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     async refreshSettings() {
         const dynamicSettings: StorageSetting[] = [];
 
+        const infoSettings = this.generateInfoSettings();
+        dynamicSettings.push(...infoSettings);
+
         const motionSettings = this.generateMotionSettings();
         dynamicSettings.push(...motionSettings);
 
@@ -1095,6 +1381,9 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         const osdSettings = this.generateOSDSettings();
         dynamicSettings.push(...osdSettings);
 
+        const ptzSettings = this.generatePTZSettings();
+        dynamicSettings.push(...ptzSettings);
+
         this.storageSettings = await convertSettingsToStorageSettings({
             device: this,
             dynamicSettings,
@@ -1107,6 +1396,8 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         this.setAudioSettingsValues();
         this.setTimeSettingsValues();
         this.setOSDSettingsValues();
+        this.setPTZSettingsValues();
+        this.setInfoSettingsValues();
     }
 
     async getMixinSettings(): Promise<Setting[]> {
