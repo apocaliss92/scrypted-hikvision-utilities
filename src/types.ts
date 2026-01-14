@@ -306,3 +306,29 @@ export interface PTZPreset {
     presetName?: string[];
     enabled?: string[];
 }
+
+export interface SupplementLightCapabilities {
+    modes: string[];
+    cameraType: string[];
+    irBrightnessMin: string[];
+    irBrightnessMax: string[];
+    whiteBrightnessMin: string[];
+    whiteBrightnessMax: string[];
+    brightnessControlOptions: string[];
+    smartBrightnessControlOptions: string[];
+    supportsOverexposeSuppress?: string[];
+}
+
+export interface SupplementLightSettings {
+    supplementLightMode: string[];
+    mixedLightBrightnessRegulatMode: string[];
+    irLightBrightness?: string[];
+    whiteLightBrightness?: string[];
+    eventIntelligenceConfig?: EventIntelligenceConfig[];
+}
+
+export interface EventIntelligenceConfig {
+    brightnessRegulatMode: string[];
+    whiteLightBrightness: string[];
+    irLightBrightness: string[];
+}

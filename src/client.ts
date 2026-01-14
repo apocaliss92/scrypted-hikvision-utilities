@@ -2,7 +2,7 @@ import { AuthFetchCredentialState, HttpFetchOptions, authHttpFetch } from '@scry
 import { Readable } from 'stream';
 import xml2js from 'xml2js';
 import { Destroyable } from '../../scrypted/plugins/rtsp/src/rtsp';
-import { DynamicCapRoot, MotionDetectionRoot, StreamingChannelListRoot } from './types';
+import { DynamicCapRoot, MotionDetectionRoot, StreamingChannelListRoot, SupplementLightCapabilities, SupplementLightSettings } from './types';
 import { MotionDetectionUpdateParams, StreamingChannelUpdateParams, formatFrameRate, formatKeyFrameInterval } from './utils';
 
 export class HikvisionCameraAPI {
@@ -1087,6 +1087,661 @@ export class HikvisionCameraAPI {
                 'Content-Type': 'application/xml',
             },
             body: xml,
+        });
+    }
+
+    async getSupplementLightCapabilities(): Promise<SupplementLightCapabilities | null> {
+        try {
+            const channelId = String(this.channel?.[0] ?? 1);
+            const response = await this.request({
+                method: 'GET',
+                url: `http://${this.ip}/ISAPI/Image/channels/${channelId}/SupplementLight/capabilities`,
+                responseType: 'text',
+                headers: {
+                    'Content-Type': 'application/xml',
+                },
+            });
+            const json = await xml2js.parseStringPromise(response.body, {
+                explicitArray: true,
+                mergeAttrs: false,
+                attrkey: '$',
+                charkey: '_'
+            });
+
+            const data = json.SupplementLight;
+
+            // Available modes from opt attribute
+            const modeData = data?.supplementLightMode?.[0];
+            const optString = typeof modeData === 'object' ? modeData.$.opt : '';
+            const opts = optString.split(',').map((s: string) => s.trim()).filter(Boolean);
+
+            const modes: string[] = [];
+            if (opts.includes('eventIntelligence')) modes.push('Smart');
+            if (opts.includes('colorVuWhiteLight')) modes.push('White');
+            if (opts.includes('irLight')) modes.push('IR');
+
+            const cameraType: string =
+                modes.length === 0 ? 'not-supported' :
+                modes.length === 1 && modes[0] === 'White' ? 'white-only' :
+                modes.length === 1 && modes[0] === 'IR' ? 'ir-only' :
+                'smart-hybrid';
+
+            // Brightness ranges
+            const irBrightness = data?.irLightBrightness?.[0];
+            const whiteBrightness = data?.whiteLightBrightness?.[0];
+
+            const irBrightnessMin = typeof irBrightness === 'object' ? irBrightness.$.min : '0';
+            const irBrightnessMax = typeof irBrightness === 'object' ? irBrightness.$.max : '100';
+            const whiteBrightnessMin = typeof whiteBrightness === 'object' ? whiteBrightness.$.min : '0';
+            const whiteBrightnessMax = typeof whiteBrightness === 'object' ? whiteBrightness.$.max : '100';
+
+            // Brightness control options
+            const mixedLightMode = data?.mixedLightBrightnessRegulatMode?.[0];
+            const brightnessControlOptions = typeof mixedLightMode === 'object'
+                ? mixedLightMode.$.opt.split(',')
+                : ['auto', 'manual'];
+
+            // Smart mode brightness control options
+            const eventIntelConfig = data?.EventIntelligenceModeCfg?.[0];
+            const smartBrightnessMode = eventIntelConfig?.brightnessRegulatMode?.[0];
+            const smartBrightnessControlOptions = typeof smartBrightnessMode === 'object'
+                ? smartBrightnessMode.$.opt.split(',')
+                : ['auto', 'manual'];
+
+            return {
+                modes,
+                cameraType: [cameraType],
+                irBrightnessMin: [irBrightnessMin],
+                irBrightnessMax: [irBrightnessMax],
+                whiteBrightnessMin: [whiteBrightnessMin],
+                whiteBrightnessMax: [whiteBrightnessMax],
+                brightnessControlOptions,
+                smartBrightnessControlOptions,
+            };
+        } catch (e: any) {
+            if (e?.statusCode === 403 || e?.message?.includes('403')) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    async getSupplementLight(): Promise<SupplementLightSettings | null> {
+        try {
+            const channelId = String(this.channel?.[0] ?? 1);
+            const response = await this.request({
+                method: 'GET',
+                url: `http://${this.ip}/ISAPI/Image/channels/${channelId}/SupplementLight`,
+                responseType: 'text',
+                headers: {
+                    'Content-Type': 'application/xml',
+                },
+            });
+            const json = await xml2js.parseStringPromise(response.body, {
+                explicitArray: true,
+                mergeAttrs: false,
+                attrkey: '$',
+                charkey: '_'
+            });
+
+            const data = json.SupplementLight;
+            const eventIntelConfig = data?.EventIntelligenceModeCfg?.[0];
+
+            return {
+                supplementLightMode: data?.supplementLightMode || ['close'],
+                mixedLightBrightnessRegulatMode: data?.mixedLightBrightnessRegulatMode || ['manual'],
+                irLightBrightness: data?.irLightBrightness,
+                whiteLightBrightness: data?.whiteLightBrightness,
+                eventIntelligenceConfig: eventIntelConfig ? [{
+                    brightnessRegulatMode: eventIntelConfig.brightnessRegulatMode || ['manual'],
+                    whiteLightBrightness: eventIntelConfig.whiteLightBrightness || ['100'],
+                    irLightBrightness: eventIntelConfig.irLightBrightness || ['100'],
+                }] : undefined,
+            };
+        } catch (e: any) {
+            if (e?.statusCode === 403 || e?.message?.includes('403')) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    async updateSupplementLight(params: {
+        supplementLightMode?: string;
+        mixedLightBrightnessRegulatMode?: string;
+        irLightBrightness?: number;
+        whiteLightBrightness?: number;
+        eventIntelligenceConfig?: {
+            brightnessRegulatMode?: string;
+            whiteLightBrightness?: number;
+            irLightBrightness?: number;
+        };
+    }): Promise<void> {
+        const channelId = String(this.channel?.[0] ?? 1);
+
+        const currentResponse = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/Image/channels/${channelId}/SupplementLight`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+
+        let xml = currentResponse.body;
+
+        if (params.supplementLightMode !== undefined) {
+            xml = xml.replace(
+                /<supplementLightMode[^>]*>.*?<\/supplementLightMode>/s,
+                `<supplementLightMode>${params.supplementLightMode}</supplementLightMode>`
+            );
+        }
+
+        if (params.mixedLightBrightnessRegulatMode !== undefined) {
+            xml = xml.replace(
+                /<mixedLightBrightnessRegulatMode[^>]*>.*?<\/mixedLightBrightnessRegulatMode>/s,
+                `<mixedLightBrightnessRegulatMode>${params.mixedLightBrightnessRegulatMode}</mixedLightBrightnessRegulatMode>`
+            );
+        }
+
+        if (params.eventIntelligenceConfig) {
+            const config = params.eventIntelligenceConfig;
+            
+            const eventBlockMatch = xml.match(/(<EventIntelligenceModeCfg[^>]*>)([\s\S]*?)(<\/EventIntelligenceModeCfg>)/);
+            if (eventBlockMatch) {
+                let eventBlock = eventBlockMatch[2];
+                
+                if (config.brightnessRegulatMode !== undefined) {
+                    eventBlock = eventBlock.replace(
+                        /<brightnessRegulatMode[^>]*>.*?<\/brightnessRegulatMode>/s,
+                        `<brightnessRegulatMode>${config.brightnessRegulatMode}</brightnessRegulatMode>`
+                    );
+                }
+                
+                if (config.whiteLightBrightness !== undefined) {
+                    eventBlock = eventBlock.replace(
+                        /<whiteLightBrightness[^>]*>\d+<\/whiteLightBrightness>/s,
+                        `<whiteLightBrightness>${config.whiteLightBrightness}</whiteLightBrightness>`
+                    );
+                }
+                
+                if (config.irLightBrightness !== undefined) {
+                    eventBlock = eventBlock.replace(
+                        /<irLightBrightness[^>]*>\d+<\/irLightBrightness>/s,
+                        `<irLightBrightness>${config.irLightBrightness}</irLightBrightness>`
+                    );
+                }
+                
+                xml = xml.replace(
+                    /(<EventIntelligenceModeCfg[^>]*>)([\s\S]*?)(<\/EventIntelligenceModeCfg>)/,
+                    `$1${eventBlock}$3`
+                );
+            }
+        }
+
+        if (params.irLightBrightness !== undefined) {
+            xml = xml.replace(
+                /(<SupplementLight[^>]*>[\s\S]*?)(<irLightBrightness[^>]*>)\d+(<\/irLightBrightness>)([\s\S]*?<EventIntelligenceModeCfg)/,
+                `$1$2${params.irLightBrightness}$3$4`
+            );
+        }
+
+        if (params.whiteLightBrightness !== undefined) {
+            const beforeReplace = xml;
+            xml = xml.replace(
+                /(<SupplementLight[^>]*>[\s\S]*?)(<whiteLightBrightness[^>]*>)\d+(<\/whiteLightBrightness>)([\s\S]*?<EventIntelligenceModeCfg)/,
+                `$1$2${params.whiteLightBrightness}$3$4`
+            );
+            if (xml === beforeReplace) {
+                xml = xml.replace(
+                    /<whiteLightBrightness[^>]*>\d+<\/whiteLightBrightness>/,
+                    `<whiteLightBrightness>${params.whiteLightBrightness}</whiteLightBrightness>`
+                );
+            }
+        }
+
+        const putResponse = await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/Image/channels/${channelId}/SupplementLight`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+            body: xml,
+        });
+    }
+
+    async updateOverexposeSuppress(enabled: boolean): Promise<void> {
+        const channelId = String(this.channel?.[0] ?? 1);
+        const url = `http://${this.ip}/ISAPI/Image/channels/${channelId}/exposure`;
+
+        const payload =
+            `<?xml version="1.0" encoding="UTF-8"?>` +
+            `<Exposure>` +
+            `<ExposureType>manual</ExposureType>` +
+            `<OverexposeSuppress><enabled>${enabled ? 'true' : 'false'}</enabled></OverexposeSuppress>` +
+            `</Exposure>`;
+
+        const truncate = (s: any, max = 4000) => {
+            if (s === undefined || s === null)
+                return s;
+            const str = typeof s === 'string' ? s : String(s);
+            if (str.length <= max)
+                return str;
+            return str.slice(0, max) + `... (${str.length} chars)`;
+        };
+
+        try {
+            const response = await this.request({
+                method: 'PUT',
+                url,
+                responseType: 'text',
+                headers: {
+                    'Content-Type': 'application/xml',
+                },
+                body: payload,
+            });
+
+            const status = (response as any)?.statusCode ?? (response as any)?.status ?? 'unknown';
+            const body = (response as any)?.body;
+
+            if (typeof status === 'number' && status >= 400) {
+                this.console.warn('[SmartSupplementLight] Non success HTTP status:', status);
+            }
+        } catch (e) {
+            this.console.warn('[SmartSupplementLight] Failed to set OverexposeSuppress, ignoring.', e);
+        }
+    }
+
+    async getAlarmCapabilities(): Promise<{ json: any; xml: string }> {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/System/IO/inputs`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const xml = response.body;
+        const json = await xml2js.parseStringPromise(xml, {
+            explicitArray: false,
+            mergeAttrs: true,
+        });
+        return { json, xml };
+    }
+
+    async getAlarm(port: string): Promise<{ json: any; xml: string }> {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/System/IO/inputs/${port}`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+        const xml = response.body;
+        const parsed = await xml2js.parseStringPromise(xml, { explicitArray: true });
+        return { json: parsed.IOInputPort, xml };
+    }
+
+    async setAlarm(isOn: boolean): Promise<{ json: any; xml: string }> {
+        const data = `<IOInputPort><id>1</id><enabled>true</enabled><triggering>${isOn ? 'low' : 'high'}</triggering></IOInputPort>`;
+
+        const response = await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/System/IO/inputs/1`,
+            responseType: 'text',
+            headers: { 'Content-Type': 'application/xml' },
+            body: data
+        });
+
+        const xml = response.body;
+        let json = {};
+
+        try {
+            json = await xml2js.parseStringPromise(xml);
+        } catch (error) {
+            console.error("Failed to parse XML response for setAlarm:", error);
+        }
+
+        return { json, xml };
+    }
+
+    async getAlarmLinkageCapabilities(): Promise<{
+        supportsBeep: boolean;
+        supportsWhiteLight: boolean;
+        supportsIO: boolean;
+    }> {
+        try {
+            const response = await this.request({
+                method: 'GET',
+                url: `http://${this.ip}/ISAPI/Event/triggersCap`,
+                responseType: 'text',
+                headers: {
+                    'Content-Type': 'application/xml',
+                },
+            });
+
+            const xml = response.body;
+            const parsed = await xml2js.parseStringPromise(xml, { explicitArray: false });
+            
+            const ioTriggerCap = parsed.EventTriggersCap?.IOTriggerCap || {};
+            
+            return {
+                supportsBeep: ioTriggerCap.isSupportBeep === 'true',
+                supportsWhiteLight: ioTriggerCap.isSupportWhiteLight === 'true',
+                supportsIO: ioTriggerCap.isSupportIO === 'true',
+            };
+        } catch (e) {
+            return {
+                supportsBeep: false,
+                supportsWhiteLight: false,
+                supportsIO: false,
+            };
+        }
+    }
+
+    async getAlarmLinkages(): Promise<{
+        beep: boolean;
+        whiteLight: boolean;
+        io: boolean;
+        whiteLightDuration: number;
+    }> {
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/Event/triggers/IO-1`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+
+        const xml = response.body;
+        const parsed = await xml2js.parseStringPromise(xml, { explicitArray: false });
+        
+        const notifications = parsed.EventTrigger?.EventTriggerNotificationList?.EventTriggerNotification || [];
+        const notificationList = Array.isArray(notifications) ? notifications : [notifications];
+        
+        const linkages = {
+            beep: false,
+            whiteLight: false,
+            io: false,
+            whiteLightDuration: 5,
+        };
+
+        for (const notification of notificationList) {
+            const method = notification.notificationMethod;
+            if (method === 'beep') linkages.beep = true;
+            if (method === 'whiteLight') {
+                linkages.whiteLight = true;
+                const duration = notification.WhiteLightAction?.whiteLightDurationTime;
+                if (duration) linkages.whiteLightDuration = parseInt(duration, 10) || 5;
+            }
+            if (method === 'IO') linkages.io = true;
+        }
+
+        return linkages;
+    }
+
+    async setAlarmLinkages(linkages: {
+        beep: boolean;
+        whiteLight: boolean;
+        io: boolean;
+        whiteLightDuration: number;
+    }): Promise<void> {
+        
+        const response = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/Event/triggers/IO-1`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+
+        const parsed = await xml2js.parseStringPromise(response.body, { explicitArray: true });
+        
+        const eventTrigger = parsed.EventTrigger;
+        const notifications = eventTrigger?.EventTriggerNotificationList?.[0]?.EventTriggerNotification || [];
+        
+        const newNotifications: any[] = [];
+        
+        // Keep all notifications that are not alarm-related
+        for (const notification of notifications) {
+            const method = notification.notificationMethod?.[0];
+            if (!['beep', 'whiteLight', 'IO'].includes(method)) {
+                newNotifications.push(notification);
+            }
+        }
+        
+        // Add alarm linkage notifications only if enabled
+        if (linkages.beep) {
+            newNotifications.push({
+                id: ['beep'],
+                notificationMethod: ['beep'],
+                notificationRecurrence: ['beginning'],
+            });
+        }
+        
+        if (linkages.whiteLight) {
+            newNotifications.push({
+                id: ['whiteLight'],
+                notificationMethod: ['whiteLight'],
+                notificationRecurrence: ['beginning'],
+                WhiteLightAction: [{
+                    whiteLightDurationTime: [linkages.whiteLightDuration.toString()],
+                }],
+            });
+        }
+        
+        if (linkages.io) {
+            newNotifications.push({
+                id: ['IO-1'],
+                notificationMethod: ['IO'],
+                notificationRecurrence: ['beginning'],
+                outputIOPortID: ['1'],
+            });
+        }
+        
+        if (!eventTrigger.EventTriggerNotificationList) {
+            eventTrigger.EventTriggerNotificationList = [{}];
+        }
+        eventTrigger.EventTriggerNotificationList[0].EventTriggerNotification = newNotifications;
+        
+        const builder = new xml2js.Builder({
+            xmldec: { version: '1.0', encoding: 'UTF-8' },
+            renderOpts: { pretty: true },
+        });
+        
+        const xmlData = builder.buildObject(parsed);
+        this.console.log('Generated XML:', xmlData);
+        
+        await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/Event/triggers/IO-1`,
+            responseType: 'text',
+            headers: { 'Content-Type': 'application/xml' },
+            body: xmlData,
+        });
+        
+        this.console.log('setAlarmLinkages completed successfully');
+    }
+
+    async getAudioAlarmCapabilities(): Promise<{
+        supported: boolean;
+        audioTypes: { id: number; description: string }[];
+        volumeRange: { min: number; max: number };
+        alarmTimesRange: { min: number; max: number };
+    } | null> {
+        try {
+            const response = await this.request({
+                method: 'GET',
+                url: `http://${this.ip}/ISAPI/Event/triggers/notifications/AudioAlarm/capabilities?format=json`,
+                responseType: 'json',
+            });
+            
+            const cap = response.body?.AudioAlarmCap;
+            if (!cap) return null;
+            
+            const audioList = cap.AlertAudioTypeListCap || cap.audioTypeListCap || [];
+            const audioTypes = audioList.map((item: any) => ({
+                id: item.alertAudioID || item.audioID,
+                description: item.alertAudioDescription || item.audioDescription,
+            }));
+            
+            return {
+                supported: true,
+                audioTypes,
+                volumeRange: {
+                    min: cap.audioVolume?.['@min'] || 1,
+                    max: cap.audioVolume?.['@max'] || 100,
+                },
+                alarmTimesRange: {
+                    min: cap.alarmTimes?.['@min'] || 1,
+                    max: cap.alarmTimes?.['@max'] || 50,
+                },
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    async getAudioAlarmSettings(): Promise<{
+        audioID: number;
+        audioVolume: number;
+        alarmTimes: number;
+    } | null> {
+        try {
+            const response = await this.request({
+                method: 'GET',
+                url: `http://${this.ip}/ISAPI/Event/triggers/notifications/AudioAlarm?format=json`,
+                responseType: 'json',
+            });
+            
+            const alarm = response.body?.AudioAlarm;
+            if (!alarm) return null;
+            
+            return {
+                audioID: alarm.alertAudioID || alarm.audioID || 1,
+                audioVolume: alarm.audioVolume || 50,
+                alarmTimes: alarm.alarmTimes || 5,
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    async setAudioAlarmSettings(settings: {
+        audioID: number;
+        audioVolume: number;
+        alarmTimes: number;
+    }): Promise<void> {
+        const currentResponse = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/Event/triggers/notifications/AudioAlarm?format=json`,
+            responseType: 'json',
+        });
+        
+        const current = currentResponse.body?.AudioAlarm || {};
+        
+        const audioAlarm = {
+            AudioAlarm: {
+                ...current,
+                audioID: settings.audioID,
+                alertAudioID: settings.audioID,
+                audioVolume: settings.audioVolume,
+                alarmTimes: settings.alarmTimes,
+            },
+        };
+        
+        await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/Event/triggers/notifications/AudioAlarm?format=json`,
+            responseType: 'json',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(audioAlarm),
+        });
+    }
+
+    async getWhiteLightAlarmCapabilities(): Promise<{
+        supported: boolean;
+        durationRange: { min: number; max: number };
+        frequencyOptions: string[];
+    } | null> {
+        try {
+            const response = await this.request({
+                method: 'GET',
+                url: `http://${this.ip}/ISAPI/Event/triggers/notifications/whiteLightAlarm/capabilities?format=json`,
+                responseType: 'json',
+            });
+            
+            const cap = response.body?.WhiteLightAlarmCap;
+            if (!cap) return null;
+            
+            const frequencyOpt = cap.frequency?.['@opt'] || 'high,medium,low,normallyOn';
+            
+            return {
+                supported: true,
+                durationRange: {
+                    min: cap.durationTime?.['@min'] || 1,
+                    max: cap.durationTime?.['@max'] || 60,
+                },
+                frequencyOptions: frequencyOpt.split(','),
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    async getWhiteLightAlarmSettings(): Promise<{
+        durationTime: number;
+        frequency: string;
+    } | null> {
+        try {
+            const response = await this.request({
+                method: 'GET',
+                url: `http://${this.ip}/ISAPI/Event/triggers/notifications/whiteLightAlarm?format=json`,
+                responseType: 'json',
+            });
+            
+            const alarm = response.body?.WhiteLightAlarm;
+            if (!alarm) return null;
+            
+            return {
+                durationTime: alarm.durationTime || 15,
+                frequency: alarm.frequency || 'medium',
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    async setWhiteLightAlarmSettings(settings: {
+        durationTime: number;
+        frequency: string;
+    }): Promise<void> {
+        const currentResponse = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/Event/triggers/notifications/whiteLightAlarm?format=json`,
+            responseType: 'json',
+        });
+        
+        const current = currentResponse.body?.WhiteLightAlarm || {};
+        
+        const whiteLightAlarm = {
+            WhiteLightAlarm: {
+                ...current,
+                durationTime: settings.durationTime,
+                frequency: settings.frequency,
+            },
+        };
+        
+        await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/Event/triggers/notifications/whiteLightAlarm?format=json`,
+            responseType: 'json',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(whiteLightAlarm),
         });
     }
 }
