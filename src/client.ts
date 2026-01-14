@@ -2,7 +2,7 @@ import { AuthFetchCredentialState, HttpFetchOptions, authHttpFetch } from '@scry
 import { Readable } from 'stream';
 import xml2js from 'xml2js';
 import { Destroyable } from '../../scrypted/plugins/rtsp/src/rtsp';
-import { DynamicCapRoot, MotionDetectionRoot, StreamingChannelListRoot } from './types';
+import { DynamicCapRoot, MotionDetectionRoot, StreamingChannelListRoot, SupplementLightCapabilities, SupplementLightSettings } from './types';
 import { MotionDetectionUpdateParams, StreamingChannelUpdateParams, formatFrameRate, formatKeyFrameInterval } from './utils';
 
 export class HikvisionCameraAPI {
@@ -1088,5 +1088,268 @@ export class HikvisionCameraAPI {
             },
             body: xml,
         });
+    }
+
+    async getSupplementLightCapabilities(): Promise<SupplementLightCapabilities | null> {
+        try {
+            const channelId = String(this.channel?.[0] ?? 1);
+            const response = await this.request({
+                method: 'GET',
+                url: `http://${this.ip}/ISAPI/Image/channels/${channelId}/SupplementLight/capabilities`,
+                responseType: 'text',
+                headers: {
+                    'Content-Type': 'application/xml',
+                },
+            });
+            const json = await xml2js.parseStringPromise(response.body, {
+                explicitArray: true,
+                mergeAttrs: false,
+                attrkey: '$',
+                charkey: '_'
+            });
+
+            const data = json.SupplementLight;
+
+            // Available modes from opt attribute
+            const modeData = data?.supplementLightMode?.[0];
+            const optString = typeof modeData === 'object' ? modeData.$.opt : '';
+            const opts = optString.split(',').map((s: string) => s.trim()).filter(Boolean);
+
+            const modes: string[] = [];
+            if (opts.includes('eventIntelligence')) modes.push('Smart');
+            if (opts.includes('colorVuWhiteLight')) modes.push('White');
+            if (opts.includes('irLight')) modes.push('IR');
+
+            const cameraType: string =
+                modes.length === 0 ? 'not-supported' :
+                modes.length === 1 && modes[0] === 'White' ? 'white-only' :
+                modes.length === 1 && modes[0] === 'IR' ? 'ir-only' :
+                'smart-hybrid';
+
+            // Brightness ranges
+            const irBrightness = data?.irLightBrightness?.[0];
+            const whiteBrightness = data?.whiteLightBrightness?.[0];
+
+            const irBrightnessMin = typeof irBrightness === 'object' ? irBrightness.$.min : '0';
+            const irBrightnessMax = typeof irBrightness === 'object' ? irBrightness.$.max : '100';
+            const whiteBrightnessMin = typeof whiteBrightness === 'object' ? whiteBrightness.$.min : '0';
+            const whiteBrightnessMax = typeof whiteBrightness === 'object' ? whiteBrightness.$.max : '100';
+
+            // Brightness control options
+            const mixedLightMode = data?.mixedLightBrightnessRegulatMode?.[0];
+            const brightnessControlOptions = typeof mixedLightMode === 'object'
+                ? mixedLightMode.$.opt.split(',')
+                : ['auto', 'manual'];
+
+            // Smart mode brightness control options
+            const eventIntelConfig = data?.EventIntelligenceModeCfg?.[0];
+            const smartBrightnessMode = eventIntelConfig?.brightnessRegulatMode?.[0];
+            const smartBrightnessControlOptions = typeof smartBrightnessMode === 'object'
+                ? smartBrightnessMode.$.opt.split(',')
+                : ['auto', 'manual'];
+
+            return {
+                modes,
+                cameraType: [cameraType],
+                irBrightnessMin: [irBrightnessMin],
+                irBrightnessMax: [irBrightnessMax],
+                whiteBrightnessMin: [whiteBrightnessMin],
+                whiteBrightnessMax: [whiteBrightnessMax],
+                brightnessControlOptions,
+                smartBrightnessControlOptions,
+            };
+        } catch (e: any) {
+            if (e?.statusCode === 403 || e?.message?.includes('403')) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    async getSupplementLight(): Promise<SupplementLightSettings | null> {
+        try {
+            const channelId = String(this.channel?.[0] ?? 1);
+            const response = await this.request({
+                method: 'GET',
+                url: `http://${this.ip}/ISAPI/Image/channels/${channelId}/SupplementLight`,
+                responseType: 'text',
+                headers: {
+                    'Content-Type': 'application/xml',
+                },
+            });
+            const json = await xml2js.parseStringPromise(response.body, {
+                explicitArray: true,
+                mergeAttrs: false,
+                attrkey: '$',
+                charkey: '_'
+            });
+
+            const data = json.SupplementLight;
+            const eventIntelConfig = data?.EventIntelligenceModeCfg?.[0];
+
+            return {
+                supplementLightMode: data?.supplementLightMode || ['close'],
+                mixedLightBrightnessRegulatMode: data?.mixedLightBrightnessRegulatMode || ['manual'],
+                irLightBrightness: data?.irLightBrightness,
+                whiteLightBrightness: data?.whiteLightBrightness,
+                eventIntelligenceConfig: eventIntelConfig ? [{
+                    brightnessRegulatMode: eventIntelConfig.brightnessRegulatMode || ['manual'],
+                    whiteLightBrightness: eventIntelConfig.whiteLightBrightness || ['100'],
+                    irLightBrightness: eventIntelConfig.irLightBrightness || ['100'],
+                }] : undefined,
+            };
+        } catch (e: any) {
+            if (e?.statusCode === 403 || e?.message?.includes('403')) {
+                return null;
+            }
+            throw e;
+        }
+    }
+
+    async updateSupplementLight(params: {
+        supplementLightMode?: string;
+        mixedLightBrightnessRegulatMode?: string;
+        irLightBrightness?: number;
+        whiteLightBrightness?: number;
+        eventIntelligenceConfig?: {
+            brightnessRegulatMode?: string;
+            whiteLightBrightness?: number;
+            irLightBrightness?: number;
+        };
+    }): Promise<void> {
+        const channelId = String(this.channel?.[0] ?? 1);
+
+        const currentResponse = await this.request({
+            method: 'GET',
+            url: `http://${this.ip}/ISAPI/Image/channels/${channelId}/SupplementLight`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+        });
+
+        let xml = currentResponse.body;
+
+        if (params.supplementLightMode !== undefined) {
+            xml = xml.replace(
+                /<supplementLightMode[^>]*>.*?<\/supplementLightMode>/s,
+                `<supplementLightMode>${params.supplementLightMode}</supplementLightMode>`
+            );
+        }
+
+        if (params.mixedLightBrightnessRegulatMode !== undefined) {
+            xml = xml.replace(
+                /<mixedLightBrightnessRegulatMode[^>]*>.*?<\/mixedLightBrightnessRegulatMode>/s,
+                `<mixedLightBrightnessRegulatMode>${params.mixedLightBrightnessRegulatMode}</mixedLightBrightnessRegulatMode>`
+            );
+        }
+
+        if (params.eventIntelligenceConfig) {
+            const config = params.eventIntelligenceConfig;
+            
+            const eventBlockMatch = xml.match(/(<EventIntelligenceModeCfg[^>]*>)([\s\S]*?)(<\/EventIntelligenceModeCfg>)/);
+            if (eventBlockMatch) {
+                let eventBlock = eventBlockMatch[2];
+                
+                if (config.brightnessRegulatMode !== undefined) {
+                    eventBlock = eventBlock.replace(
+                        /<brightnessRegulatMode[^>]*>.*?<\/brightnessRegulatMode>/s,
+                        `<brightnessRegulatMode>${config.brightnessRegulatMode}</brightnessRegulatMode>`
+                    );
+                }
+                
+                if (config.whiteLightBrightness !== undefined) {
+                    eventBlock = eventBlock.replace(
+                        /<whiteLightBrightness[^>]*>\d+<\/whiteLightBrightness>/s,
+                        `<whiteLightBrightness>${config.whiteLightBrightness}</whiteLightBrightness>`
+                    );
+                }
+                
+                if (config.irLightBrightness !== undefined) {
+                    eventBlock = eventBlock.replace(
+                        /<irLightBrightness[^>]*>\d+<\/irLightBrightness>/s,
+                        `<irLightBrightness>${config.irLightBrightness}</irLightBrightness>`
+                    );
+                }
+                
+                xml = xml.replace(
+                    /(<EventIntelligenceModeCfg[^>]*>)([\s\S]*?)(<\/EventIntelligenceModeCfg>)/,
+                    `$1${eventBlock}$3`
+                );
+            }
+        }
+
+        if (params.irLightBrightness !== undefined) {
+            xml = xml.replace(
+                /(<SupplementLight[^>]*>[\s\S]*?)(<irLightBrightness[^>]*>)\d+(<\/irLightBrightness>)([\s\S]*?<EventIntelligenceModeCfg)/,
+                `$1$2${params.irLightBrightness}$3$4`
+            );
+        }
+
+        if (params.whiteLightBrightness !== undefined) {
+            const beforeReplace = xml;
+            xml = xml.replace(
+                /(<SupplementLight[^>]*>[\s\S]*?)(<whiteLightBrightness[^>]*>)\d+(<\/whiteLightBrightness>)([\s\S]*?<EventIntelligenceModeCfg)/,
+                `$1$2${params.whiteLightBrightness}$3$4`
+            );
+            if (xml === beforeReplace) {
+                xml = xml.replace(
+                    /<whiteLightBrightness[^>]*>\d+<\/whiteLightBrightness>/,
+                    `<whiteLightBrightness>${params.whiteLightBrightness}</whiteLightBrightness>`
+                );
+            }
+        }
+
+        const putResponse = await this.request({
+            method: 'PUT',
+            url: `http://${this.ip}/ISAPI/Image/channels/${channelId}/SupplementLight`,
+            responseType: 'text',
+            headers: {
+                'Content-Type': 'application/xml',
+            },
+            body: xml,
+        });
+    }
+
+    async updateOverexposeSuppress(enabled: boolean): Promise<void> {
+        const channelId = String(this.channel?.[0] ?? 1);
+        const url = `http://${this.ip}/ISAPI/Image/channels/${channelId}/exposure`;
+
+        const payload =
+            `<?xml version="1.0" encoding="UTF-8"?>` +
+            `<Exposure>` +
+            `<ExposureType>manual</ExposureType>` +
+            `<OverexposeSuppress><enabled>${enabled ? 'true' : 'false'}</enabled></OverexposeSuppress>` +
+            `</Exposure>`;
+
+        const truncate = (s: any, max = 4000) => {
+            if (s === undefined || s === null)
+                return s;
+            const str = typeof s === 'string' ? s : String(s);
+            if (str.length <= max)
+                return str;
+            return str.slice(0, max) + `... (${str.length} chars)`;
+        };
+
+        try {
+            const response = await this.request({
+                method: 'PUT',
+                url,
+                responseType: 'text',
+                headers: {
+                    'Content-Type': 'application/xml',
+                },
+                body: payload,
+            });
+
+            const status = (response as any)?.statusCode ?? (response as any)?.status ?? 'unknown';
+            const body = (response as any)?.body;
+
+            if (typeof status === 'number' && status >= 400) {
+                this.console.warn('[SmartSupplementLight] Non success HTTP status:', status);
+            }
+        } catch (e) {
+            this.console.warn('[SmartSupplementLight] Failed to set OverexposeSuppress, ignoring.', e);
+        }
     }
 }

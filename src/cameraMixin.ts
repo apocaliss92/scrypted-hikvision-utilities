@@ -17,6 +17,8 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     ptzCaps: any = null;
     ptzPresets: any[] = [];
     deviceInfo: any = null;
+    supplementLightCaps: any = null;
+    supplementLightSettings: any = null;
     suppressOnPut = false;
 
     initStorage: StorageSettingsDict<string> = {}
@@ -38,6 +40,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         await this.fetchOSDCapabilities();
         await this.fetchPTZCapabilities();
         await this.fetchDeviceInfo();
+        await this.fetchSupplementLightCapabilities();
 
         await this.refreshSettings();
         await this.refreshSettings();
@@ -71,6 +74,11 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     async updatePTZCapabilities() {
         await this.fetchPTZCapabilities();
         this.setPTZSettingsValues();
+    }
+
+    async updateSupplementLightCapabilities() {
+        await this.fetchSupplementLightCapabilities();
+        this.setSupplementLightSettingsValues();
     }
 
     async fetchMotionCapabilities() {
@@ -112,6 +120,20 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
             this.console.log('PTZ not supported or error fetching capabilities', e);
             this.ptzCaps = null;
             this.ptzPresets = [];
+        }
+    }
+
+    async fetchSupplementLightCapabilities() {
+        const client = await this.getClient();
+        try {
+            this.supplementLightCaps = await client.getSupplementLightCapabilities();
+            if (this.supplementLightCaps) {
+                this.supplementLightSettings = await client.getSupplementLight();
+            }
+        } catch (e) {
+            this.console.log('Supplemental Light not supported or error fetching capabilities', e);
+            this.supplementLightCaps = null;
+            this.supplementLightSettings = null;
         }
     }
 
@@ -1177,6 +1199,155 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         return infoSettings;
     }
 
+    generateSupplementLightSettings() {
+        const lightSettings: StorageSetting[] = [];
+
+        if (!this.supplementLightCaps || this.supplementLightCaps.cameraType?.[0] === 'not-supported') {
+            return lightSettings;
+        }
+
+        const caps = this.supplementLightCaps;
+        const hasSmart = caps.modes.includes('Smart');
+        const hasWhite = caps.modes.includes('White');
+        const hasIr = caps.modes.includes('IR');
+
+        lightSettings.push({
+            key: 'supplementLightEnabled',
+            title: 'Supplemental Light',
+            subgroup: 'Light',
+            type: 'boolean',
+            immediate: true,
+            onPut: async (old: boolean, value: boolean) => {
+                if (old !== value && old !== undefined) {
+                    await this.updateSupplementLight({ enabled: value });
+                }
+            }
+        });
+
+        lightSettings.push({
+            key: 'smartSupplementLight',
+            title: 'Smart Supplement Light',
+            description: 'Enable to automatically adjust exposure to prevent overexposure when light is active',
+            subgroup: 'Light',
+            type: 'boolean',
+            immediate: true,
+            onPut: async (old: boolean, value: boolean) => {
+                if (old !== value && old !== undefined) {
+                    await this.updateOverexposeSuppress(value);
+                }
+            }
+        });
+
+        if (caps.cameraType?.[0] === 'smart-hybrid') {
+            lightSettings.push({
+                key: 'supplementLightMode',
+                title: 'Light Mode',
+                subgroup: 'Light',
+                type: 'radiopanel',
+                choices: caps.modes,
+                onPut: async (old: string, value: string) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateSupplementLight({ mode: value as any });
+                    }
+                }
+            });
+        }
+
+        // Smart Mode Settings
+        if (hasSmart && caps.cameraType?.[0] === 'smart-hybrid') {
+            lightSettings.push({
+                key: 'smartBrightnessControl',
+                title: 'Smart Brightness Control',
+                subgroup: 'Light',
+                type: 'string',
+                choices: caps.smartBrightnessControlOptions,
+                radioGroups: ['Smart'],
+                onPut: async (old: string, value: string) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateSupplementLight({ smartBrightnessControl: value });
+                    }
+                }
+            });
+        }
+
+        // White Mode Settings
+        if (hasWhite && (caps.cameraType?.[0] === 'smart-hybrid' || caps.cameraType?.[0] === 'white-only')) {
+            lightSettings.push({
+                key: 'whiteBrightnessControl',
+                title: 'Light Brightness Control',
+                subgroup: 'Light',
+                type: 'string',
+                choices: caps.brightnessControlOptions,
+                radioGroups: ['White'],
+                onPut: async (old: string, value: string) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateSupplementLight({ whiteBrightnessControl: value });
+                    }
+                }
+            });
+
+            lightSettings.push({
+                key: 'whiteBrightness',
+                title: 'White Light Brightness',
+                subgroup: 'Light',
+                type: 'number',
+                placeholder: '0-100',
+                range: [Number(caps.whiteBrightnessMin?.[0]), Number(caps.whiteBrightnessMax?.[0])],
+                radioGroups: ['White', 'Smart'],
+                onPut: async (old: number, value: number) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateSupplementLight({ whiteBrightness: value });
+                    }
+                }
+            });
+        }
+
+        // IR Mode Settings
+        if (hasIr && (caps.cameraType?.[0] === 'smart-hybrid' || caps.cameraType?.[0] === 'ir-only')) {
+            lightSettings.push({
+                key: 'irBrightnessControl',
+                title: 'IR Brightness Control',
+                subgroup: 'Light',
+                type: 'string',
+                choices: caps.brightnessControlOptions,
+                radioGroups: ['IR'],
+                onPut: async (old: string, value: string) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateSupplementLight({ irBrightnessControl: value });
+                    }
+                }
+            });
+
+            lightSettings.push({
+                key: 'irBrightness',
+                title: 'IR Light Brightness',
+                subgroup: 'Light',
+                type: 'number',
+                placeholder: '0-100',
+                range: [Number(caps.irBrightnessMin?.[0]), Number(caps.irBrightnessMax?.[0])],
+                radioGroups: ['IR', 'Smart'],
+                onPut: async (old: number, value: number) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateSupplementLight({ irBrightness: value });
+                    }
+                }
+            });
+        }
+
+        lightSettings.push({
+            key: 'supplementLightRefetch',
+            title: 'Refetch',
+            subgroup: 'Light',
+            type: 'button',
+            onPut: async () => {
+                await this.updateSupplementLightCapabilities();
+                await this.refreshSettings();
+            }
+        });
+
+        return lightSettings;
+    }
+
     setMotionSettingsValues() {
         if (!this.motionCaps) return;
 
@@ -1370,6 +1541,61 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         }
     }
 
+    setSupplementLightSettingsValues() {
+        if (!this.supplementLightCaps || !this.supplementLightSettings) return;
+
+        const settings = this.supplementLightSettings;
+        const caps = this.supplementLightCaps;
+
+        // Map API mode to UI mode
+        const modeMap: Record<string, string> = {
+            'eventIntelligence': 'Smart',
+            'colorVuWhiteLight': 'White',
+            'irLight': 'IR',
+            'close': 'Off'
+        };
+
+        const apiMode = settings.supplementLightMode?.[0] || 'close';
+        const uiMode = modeMap[apiMode] || 'Smart';
+        const isEnabled = apiMode !== 'close';
+
+        this.storageSettings.values['supplementLightEnabled'] = isEnabled;
+
+        // Set mode based on camera type
+        const cameraType = caps.cameraType?.[0];
+        if (cameraType === 'white-only') {
+            this.storageSettings.values['supplementLightMode'] = 'White';
+        } else if (cameraType === 'ir-only') {
+            this.storageSettings.values['supplementLightMode'] = 'IR';
+        } else {
+            this.storageSettings.values['supplementLightMode'] = uiMode;
+        }
+
+        // Set brightness control modes
+        this.storageSettings.values['whiteBrightnessControl'] = settings.mixedLightBrightnessRegulatMode?.[0] || 'manual';
+        this.storageSettings.values['irBrightnessControl'] = settings.mixedLightBrightnessRegulatMode?.[0] || 'manual';
+
+        // Set brightness values from top-level (for White/IR-only modes)
+        if (settings.whiteLightBrightness) {
+            this.storageSettings.values['whiteBrightness'] = Number(settings.whiteLightBrightness[0]);
+        }
+        if (settings.irLightBrightness) {
+            this.storageSettings.values['irBrightness'] = Number(settings.irLightBrightness[0]);
+        }
+
+        // Set Smart mode settings from EventIntelligenceModeCfg (only for smart-hybrid cameras)
+        if (settings.eventIntelligenceConfig && cameraType === 'smart-hybrid') {
+            const smartConfig = settings.eventIntelligenceConfig[0];
+            this.storageSettings.values['smartBrightnessControl'] = smartConfig.brightnessRegulatMode?.[0] || 'manual';
+            if (smartConfig.whiteLightBrightness) {
+                this.storageSettings.values['whiteBrightness'] = Number(smartConfig.whiteLightBrightness[0]);
+            }
+            if (smartConfig.irLightBrightness) {
+                this.storageSettings.values['irBrightness'] = Number(smartConfig.irLightBrightness[0]);
+            }
+        }
+    }
+
     async updateStreamingChannel(streamId: string, params: Partial<any>) {
         const client = await this.getClient();
 
@@ -1458,6 +1684,89 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         await client.updateMotionEventTrigger({ centerNotificationEnabled });
     }
 
+    async updateSupplementLight(params: {
+        enabled?: boolean;
+        mode?: 'Smart' | 'White' | 'IR';
+        whiteBrightnessControl?: string;
+        irBrightnessControl?: string;
+        smartBrightnessControl?: string;
+        whiteBrightness?: number;
+        irBrightness?: number;
+    }) {
+        const client = await this.getClient();
+
+        // Map UI mode to API mode
+        const modeMap: Record<string, string> = {
+            'Smart': 'eventIntelligence',
+            'White': 'colorVuWhiteLight',
+            'IR': 'irLight',
+            'Off': 'close'
+        };
+
+        const updateParams: any = {};
+
+        // Enabled/disabled toggle
+        if (params.enabled !== undefined) {
+            if (!params.enabled) {
+                updateParams.supplementLightMode = 'close';
+            } else {
+                const currentMode = this.storageSettings.values['supplementLightMode'] || 'Smart';
+                updateParams.supplementLightMode = modeMap[currentMode] || 'eventIntelligence';
+            }
+        }
+
+        // Mode change
+        if (params.mode !== undefined) {
+            updateParams.supplementLightMode = modeMap[params.mode] || 'eventIntelligence';
+        }
+
+        // Brightness control modes for White/IR modes
+        if (params.whiteBrightnessControl !== undefined || params.irBrightnessControl !== undefined) {
+            updateParams.mixedLightBrightnessRegulatMode = params.whiteBrightnessControl || params.irBrightnessControl;
+        }
+
+        // Smart mode brightness control
+        if (params.smartBrightnessControl !== undefined) {
+            updateParams.eventIntelligenceConfig = updateParams.eventIntelligenceConfig || {};
+            updateParams.eventIntelligenceConfig.brightnessRegulatMode = params.smartBrightnessControl;
+        }
+
+        // Brightness values - route to correct location based on current mode
+        const currentMode = this.storageSettings.values['supplementLightMode'];
+        const isSmartMode = currentMode === 'Smart';
+
+        // this.console.log('Current mode:', currentMode, 'isSmartMode:', isSmartMode);
+        // this.console.log('Storage settings whiteBrightness:', this.storageSettings.values['whiteBrightness']);
+        // this.console.log('Storage settings irBrightness:', this.storageSettings.values['irBrightness']);
+
+        if (params.whiteBrightness !== undefined || params.irBrightness !== undefined) {
+            if (isSmartMode) {
+                // In Smart mode, send brightness inside eventIntelligenceConfig
+                updateParams.eventIntelligenceConfig = updateParams.eventIntelligenceConfig || {};
+                updateParams.eventIntelligenceConfig.whiteLightBrightness = params.whiteBrightness !== undefined
+                    ? params.whiteBrightness
+                    : this.storageSettings.values['whiteBrightness'];
+                updateParams.eventIntelligenceConfig.irLightBrightness = params.irBrightness !== undefined
+                    ? params.irBrightness
+                    : this.storageSettings.values['irBrightness'];
+            } else {
+                // In White/IR modes, send brightness at top level
+                if (params.whiteBrightness !== undefined) {
+                    updateParams.whiteLightBrightness = params.whiteBrightness;
+                }
+                if (params.irBrightness !== undefined) {
+                    updateParams.irLightBrightness = params.irBrightness;
+                }
+            }
+        }
+        await client.updateSupplementLight(updateParams);
+    }
+
+    async updateOverexposeSuppress(enabled: boolean) {
+        const client = await this.getClient();
+        await client.updateOverexposeSuppress(enabled);
+    }
+
     async release() {
         this.killed = true;
     }
@@ -1514,6 +1823,9 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         const ptzSettings = this.generatePTZSettings();
         dynamicSettings.push(...ptzSettings);
 
+        const supplementLightSettings = this.generateSupplementLightSettings();
+        dynamicSettings.push(...supplementLightSettings);
+
         this.storageSettings = await convertSettingsToStorageSettings({
             device: this,
             dynamicSettings,
@@ -1528,6 +1840,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         this.setOSDSettingsValues();
         this.setPTZSettingsValues();
         this.setInfoSettingsValues();
+        this.setSupplementLightSettingsValues();
     }
 
     async getMixinSettings(): Promise<Setting[]> {
