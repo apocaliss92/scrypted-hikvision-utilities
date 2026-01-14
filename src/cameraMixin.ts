@@ -19,6 +19,11 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     deviceInfo: any = null;
     supplementLightCaps: any = null;
     supplementLightSettings: any = null;
+    alarmCaps: any = null;
+    alarmLinkageCaps: any = null;
+    audioAlarmCaps: any = null;
+    whiteLightAlarmCaps: any = null;
+
     suppressOnPut = false;
 
     initStorage: StorageSettingsDict<string> = {}
@@ -41,6 +46,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         await this.fetchPTZCapabilities();
         await this.fetchDeviceInfo();
         await this.fetchSupplementLightCapabilities();
+        await this.fetchAlarmCapabilities();
 
         await this.refreshSettings();
         await this.refreshSettings();
@@ -79,6 +85,11 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     async updateSupplementLightCapabilities() {
         await this.fetchSupplementLightCapabilities();
         this.setSupplementLightSettingsValues();
+    }
+
+    async updateAlarmCapabilities() {
+        await this.fetchAlarmCapabilities();
+        this.setAlarmSettingsValues();
     }
 
     async fetchMotionCapabilities() {
@@ -129,11 +140,43 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
             this.supplementLightCaps = await client.getSupplementLightCapabilities();
             if (this.supplementLightCaps) {
                 this.supplementLightSettings = await client.getSupplementLight();
+                if (this.supplementLightSettings) {
+                    const modeMap: Record<string, string> = {
+                        'eventIntelligence': 'Smart',
+                        'colorVuWhiteLight': 'White',
+                        'irLight': 'IR',
+                        'close': 'Off'
+                    };
+                    const apiMode = this.supplementLightSettings.supplementLightMode?.[0] || 'close';
+                    const cameraType = this.supplementLightCaps.cameraType?.[0];
+                    if (cameraType === 'white-only') {
+                        this.storageSettings.values['supplementLightMode'] = 'White';
+                    } else if (cameraType === 'ir-only') {
+                        this.storageSettings.values['supplementLightMode'] = 'IR';
+                    } else {
+                        this.storageSettings.values['supplementLightMode'] = modeMap[apiMode] || 'Smart';
+                    }
+                }
             }
         } catch (e) {
-            this.console.log('Supplemental Light not supported or error fetching capabilities', e);
+            // this.console.log('Supplemental Light not supported or error fetching capabilities', e);
             this.supplementLightCaps = null;
             this.supplementLightSettings = null;
+        }
+    }
+
+    async fetchAlarmCapabilities() {
+        const client = await this.getClient();
+        try {
+            this.alarmCaps = await client.getAlarmCapabilities();
+            this.alarmLinkageCaps = await client.getAlarmLinkageCapabilities();
+            this.audioAlarmCaps = await client.getAudioAlarmCapabilities();
+            this.whiteLightAlarmCaps = await client.getWhiteLightAlarmCapabilities();
+        } catch (e) {
+            this.alarmCaps = null;
+            this.alarmLinkageCaps = null;
+            this.audioAlarmCaps = null;
+            this.whiteLightAlarmCaps = null;
         }
     }
 
@@ -1348,6 +1391,166 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         return lightSettings;
     }
 
+    generateAlarmSettings() {
+        const alarmSettings: StorageSetting[] = [];
+
+        if (this.alarmCaps) {
+            alarmSettings.push({
+                key: 'alarmEnabled',
+                title: 'Alarm Enabled',
+                subgroup: 'alarm',
+                type: 'boolean',
+                immediate: true,
+                onPut: async (old: boolean, value: boolean) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateAlarm({ enabled: value });
+                    }
+                }
+            });
+        }
+
+        // only show supported linkages
+        if (this.alarmCaps && this.alarmLinkageCaps) {
+            if (this.alarmLinkageCaps.supportsBeep) {
+                alarmSettings.push({
+                    key: 'alarmBeep',
+                    title: 'Audible Alarm Linkage',
+                    subgroup: 'alarm',
+                    type: 'boolean',
+                    immediate: true,
+                    onPut: async (old: boolean, value: boolean) => {
+                        if (old !== value && old !== undefined) {
+                            await this.updateAlarmLinkages({ beep: value });
+                        }
+                    }
+                });
+            }
+
+            if (this.alarmLinkageCaps.supportsWhiteLight) {
+                alarmSettings.push({
+                    key: 'alarmWhiteLight',
+                    title: 'Flashing Alarm Light Linkage',
+                    subgroup: 'alarm',
+                    type: 'boolean',
+                    immediate: true,
+                    onPut: async (old: boolean, value: boolean) => {
+                        if (old !== value && old !== undefined) {
+                            await this.updateAlarmLinkages({ whiteLight: value });
+                        }
+                    }
+                });
+            }
+
+            if (this.alarmLinkageCaps.supportsIO) {
+                alarmSettings.push({
+                    key: 'alarmIOOutput',
+                    title: 'IO Output Linkage',
+                    subgroup: 'alarm',
+                    type: 'boolean',
+                    immediate: true,
+                    onPut: async (old: boolean, value: boolean) => {
+                        if (old !== value && old !== undefined) {
+                            await this.updateAlarmLinkages({ ioOutput: value });
+                        }
+                    }
+                });
+            }
+        }
+
+        if (this.audioAlarmCaps && this.audioAlarmCaps.supported) {
+            const audioCaps = this.audioAlarmCaps;
+
+            if (audioCaps.audioTypes && audioCaps.audioTypes.length > 0) {
+                const soundTypeChoices = audioCaps.audioTypes.map(type => type.description);
+
+                alarmSettings.push({
+                    key: 'audioAlarmSoundType',
+                    title: 'Audio Sound Type',
+                    subgroup: 'alarm',
+                    type: 'string',
+                    choices: soundTypeChoices,
+                    onPut: async (old: string, value: string) => {
+                        if (old !== value && old !== undefined) {
+                            const audioType = audioCaps.audioTypes.find(type => type.description === value);
+                            if (audioType) {
+                                await this.updateAudioAlarmSettings({ soundType: String(audioType.id) });
+                            }
+                        }
+                    }
+                });
+            }
+
+            alarmSettings.push({
+                key: 'audioAlarmVolume',
+                title: 'Audio Volume',
+                subgroup: 'alarm',
+                type: 'number',
+                onPut: async (old: number, value: number) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateAudioAlarmSettings({ volume: value });
+                    }
+                }
+            });
+
+            alarmSettings.push({
+                key: 'audioAlarmPlayCount',
+                title: 'Audio Play Count',
+                subgroup: 'alarm',
+                type: 'number',
+                onPut: async (old: number, value: number) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateAudioAlarmSettings({ playCount: value });
+                    }
+                }
+            });
+        }
+
+        if (this.whiteLightAlarmCaps && this.whiteLightAlarmCaps.supported) {
+            const whiteCaps = this.whiteLightAlarmCaps;
+
+            alarmSettings.push({
+                key: 'whiteLightAlarmDuration',
+                title: 'Flashing Light Duration',
+                subgroup: 'alarm',
+                type: 'number',
+                onPut: async (old: number, value: number) => {
+                    if (old !== value && old !== undefined) {
+                        await this.updateWhiteLightAlarmSettings({ duration: value });
+                    }
+                }
+            });
+
+            if (whiteCaps.frequencyOptions && whiteCaps.frequencyOptions.length > 0) {
+                alarmSettings.push({
+                    key: 'whiteLightAlarmFrequency',
+                    title: 'Flashing Light Frequency',
+                    subgroup: 'alarm',
+                    type: 'string',
+                    immediate: true,
+                    choices: whiteCaps.frequencyOptions,
+                    onPut: async (old: string, value: string) => {
+                        if (old !== value && old !== undefined) {
+                            await this.updateWhiteLightAlarmSettings({ frequency: value });
+                        }
+                    }
+                });
+            }
+        }
+
+        alarmSettings.push({
+            key: 'alarmRefetch',
+            title: 'Refetch Alarm Settings',
+            subgroup: 'alarm',
+            type: 'button',
+            onPut: async () => {
+                await this.updateAlarmCapabilities();
+                await this.refreshSettings();
+            }
+        });
+
+        return alarmSettings;
+    }
+
     setMotionSettingsValues() {
         if (!this.motionCaps) return;
 
@@ -1596,6 +1799,50 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         }
     }
 
+    async setAlarmSettingsValues() {
+        const client = await this.getClient();
+
+        if (this.alarmCaps) {
+            const alarmStatus = await client.getAlarm('1');
+            const triggering = alarmStatus.json.triggering?.[0];
+            const enabled = triggering === 'low'; // low means alarm is on
+            this.storageSettings.values['alarmEnabled'] = enabled;
+        }
+
+        if (this.alarmCaps && this.alarmLinkageCaps) {
+            const linkages = await client.getAlarmLinkages();
+            if (this.alarmLinkageCaps.supportsBeep) {
+                this.storageSettings.values['alarmBeep'] = linkages.beep;
+            }
+            if (this.alarmLinkageCaps.supportsWhiteLight) {
+                this.storageSettings.values['alarmWhiteLight'] = linkages.whiteLight;
+            }
+            if (this.alarmLinkageCaps.supportsIO) {
+                this.storageSettings.values['alarmIOOutput'] = linkages.io;
+            }
+        }
+
+        if (this.audioAlarmCaps?.supported) {
+            const audioSettings = await client.getAudioAlarmSettings();
+            if (audioSettings) {
+                const audioType = this.audioAlarmCaps.audioTypes?.find(type => type.id === audioSettings.audioID);
+                if (audioType) {
+                    this.storageSettings.values['audioAlarmSoundType'] = audioType.description;
+                }
+                this.storageSettings.values['audioAlarmVolume'] = audioSettings.audioVolume;
+                this.storageSettings.values['audioAlarmPlayCount'] = audioSettings.alarmTimes;
+            }
+        }
+
+        if (this.whiteLightAlarmCaps?.supported) {
+            const whiteSettings = await client.getWhiteLightAlarmSettings();
+            if (whiteSettings) {
+                this.storageSettings.values['whiteLightAlarmDuration'] = whiteSettings.durationTime;
+                this.storageSettings.values['whiteLightAlarmFrequency'] = whiteSettings.frequency;
+            }
+        }
+    }
+
     async updateStreamingChannel(streamId: string, params: Partial<any>) {
         const client = await this.getClient();
 
@@ -1735,10 +1982,6 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         const currentMode = this.storageSettings.values['supplementLightMode'];
         const isSmartMode = currentMode === 'Smart';
 
-        // this.console.log('Current mode:', currentMode, 'isSmartMode:', isSmartMode);
-        // this.console.log('Storage settings whiteBrightness:', this.storageSettings.values['whiteBrightness']);
-        // this.console.log('Storage settings irBrightness:', this.storageSettings.values['irBrightness']);
-
         if (params.whiteBrightness !== undefined || params.irBrightness !== undefined) {
             if (isSmartMode) {
                 // In Smart mode, send brightness inside eventIntelligenceConfig
@@ -1765,6 +2008,72 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     async updateOverexposeSuppress(enabled: boolean) {
         const client = await this.getClient();
         await client.updateOverexposeSuppress(enabled);
+    }
+
+    async updateAlarm(params: { enabled?: boolean }) {
+        const client = await this.getClient();
+        await client.setAlarm(params.enabled!);
+    }
+
+    async updateAlarmLinkages(params: { beep?: boolean; whiteLight?: boolean; ioOutput?: boolean }) {
+        const client = await this.getClient();
+
+        const current = await client.getAlarmLinkages();
+
+        const newLinkages = {
+            beep: params.beep ?? current.beep,
+            whiteLight: params.whiteLight ?? current.whiteLight,
+            io: params.ioOutput ?? current.io,
+            whiteLightDuration: current.whiteLightDuration,
+        };
+        await client.setAlarmLinkages(newLinkages);
+
+        if (this.alarmLinkageCaps?.supportsBeep) {
+            this.storageSettings.values['alarmBeep'] = newLinkages.beep;
+        }
+        if (this.alarmLinkageCaps?.supportsWhiteLight) {
+            this.storageSettings.values['alarmWhiteLight'] = newLinkages.whiteLight;
+        }
+        if (this.alarmLinkageCaps?.supportsIO) {
+            this.storageSettings.values['alarmIOOutput'] = newLinkages.io;
+        }
+    }
+
+    async updateAudioAlarmSettings(params: { soundType?: string; volume?: number; playCount?: number }) {
+        const client = await this.getClient();
+
+        const current = await client.getAudioAlarmSettings();
+        if (current) {
+            const newSettings = {
+                audioID: params.soundType ? Number(params.soundType) : current.audioID,
+                audioVolume: params.volume ?? current.audioVolume,
+                alarmTimes: params.playCount ?? current.alarmTimes,
+            };
+            await client.setAudioAlarmSettings(newSettings);
+            
+            if (this.audioAlarmCaps) {
+                const audioType = this.audioAlarmCaps.audioTypes.find(type => type.id === newSettings.audioID);
+                this.storageSettings.values['audioAlarmSoundType'] = audioType ? audioType.description : String(newSettings.audioID);
+            }
+            this.storageSettings.values['audioAlarmVolume'] = newSettings.audioVolume;
+            this.storageSettings.values['audioAlarmPlayCount'] = newSettings.alarmTimes;
+        }
+    }
+
+    async updateWhiteLightAlarmSettings(params: { duration?: number; frequency?: string }) {
+        const client = await this.getClient();
+
+        const current = await client.getWhiteLightAlarmSettings();
+        if (current) {
+            const newSettings = {
+                durationTime: params.duration ?? current.durationTime,
+                frequency: params.frequency ?? current.frequency,
+            };
+            await client.setWhiteLightAlarmSettings(newSettings);
+            
+            this.storageSettings.values['whiteLightAlarmDuration'] = newSettings.durationTime;
+            this.storageSettings.values['whiteLightAlarmFrequency'] = newSettings.frequency;
+        }
     }
 
     async release() {
@@ -1826,6 +2135,9 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         const supplementLightSettings = this.generateSupplementLightSettings();
         dynamicSettings.push(...supplementLightSettings);
 
+        const alarmSettings = this.generateAlarmSettings();
+        dynamicSettings.push(...alarmSettings);
+
         this.storageSettings = await convertSettingsToStorageSettings({
             device: this,
             dynamicSettings,
@@ -1841,6 +2153,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         this.setPTZSettingsValues();
         this.setInfoSettingsValues();
         this.setSupplementLightSettingsValues();
+        this.setAlarmSettingsValues();
     }
 
     async getMixinSettings(): Promise<Setting[]> {
