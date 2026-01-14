@@ -3,6 +3,7 @@ import { SettingsMixinDeviceBase, SettingsMixinDeviceOptions } from "@scrypted/s
 import { StorageSetting, StorageSettings, StorageSettingsDict } from "@scrypted/sdk/storage-settings";
 import keyBy from "lodash/keyBy";
 import { HikvisionCameraAPI } from "./client";
+import { checkHikvisionEuropeFirmware } from "./firmwareScraper";
 import HikvisionVideoclipssProvider from "./main";
 import { convertSettingsToStorageSettings, generateBitrateChoices, MotionDetectionUpdateParams } from "./utils";
 
@@ -1173,6 +1174,47 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                 });
             }
         }
+
+        infoSettings.push({
+            key: 'info_checkFirmware',
+            title: 'Check Firmware (Europe Portal)',
+            subgroup: 'Info',
+            type: 'button',
+            onPut: async () => {
+                this.console.log('Checking for firmware updates...');
+                this.storageSettings.values['info_firmwareStatus'] = 'Checking...';
+                
+                try {
+                    const result = await checkHikvisionEuropeFirmware(this.deviceInfo.model);
+                    if (result) {
+                        this.storageSettings.values['info_firmwareStatus'] = `Found: ${result.version} (${result.buildDate})`;
+                        this.storageSettings.values['info_latestFirmwareUrl'] = result.downloadUrl;
+                    } else {
+                        this.storageSettings.values['info_firmwareStatus'] = 'No update found or model not matched.';
+                        this.storageSettings.values['info_latestFirmwareUrl'] = '';
+                    }
+                } catch (e) {
+                    this.console.error('Error checking firmware', e);
+                    this.storageSettings.values['info_firmwareStatus'] = 'Error checking firmware.';
+                }
+            }
+        });
+
+        infoSettings.push({
+            key: 'info_firmwareStatus',
+            title: 'Firmware Status',
+            subgroup: 'Info',
+            type: 'string',
+            readonly: true,
+        });
+
+        infoSettings.push({
+            key: 'info_latestFirmwareUrl',
+            title: 'Latest Firmware URL',
+            subgroup: 'Info',
+            type: 'string',
+            readonly: true,
+        });
 
         return infoSettings;
     }

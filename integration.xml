@@ -1,0 +1,32 @@
+http://192.168.1.245/ISAPI/System/Network/Integrate/capabilities
+<?xml version="1.0" encoding="UTF-8"?>
+<Integrate version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<CGI>
+<enable opt="true,false">true</enable>
+<certificateType opt="digest,digest/basic">digest/baisc</certificateType>
+</CGI>
+<ONVIF>
+<enable opt="true,false">true</enable>
+<certificateType opt="digest/WSSE,digest">digest/WSSE</certificateType>
+</ONVIF>
+<ISAPI>
+<enable opt="true,false">true</enable>
+</ISAPI>
+</Integrate>
+
+
+http://192.168.1.245/ISAPI/System/Network/Integrate
+<?xml version="1.0" encoding="UTF-8"?>
+<Integrate version="2.0" xmlns="http://www.hikvision.com/ver20/XMLSchema">
+<CGI>
+<enable>true</enable>
+<certificateType>digest/basic</certificateType>
+</CGI>
+<ONVIF>
+<enable>true</enable>
+<certificateType>digest/WSSE</certificateType>
+</ONVIF>
+<ISAPI>
+<enable>true</enable>
+</ISAPI>
+</Integrate>
