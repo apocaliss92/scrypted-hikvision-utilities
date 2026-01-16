@@ -1,4 +1,4 @@
-import { Setting, Settings, SettingValue } from "@scrypted/sdk";
+import sdk, { EventListenerRegister, ScryptedInterface, Setting, Settings, SettingValue } from "@scrypted/sdk";
 import { SettingsMixinDeviceBase, SettingsMixinDeviceOptions } from "@scrypted/sdk/settings-mixin";
 import { StorageSetting, StorageSettings, StorageSettingsDict } from "@scrypted/sdk/storage-settings";
 import keyBy from "lodash/keyBy";
@@ -23,6 +23,16 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
     alarmLinkageCaps: any = null;
     audioAlarmCaps: any = null;
     whiteLightAlarmCaps: any = null;
+
+    motionListener: EventListenerRegister;
+    lightAutomationOffTimeout: NodeJS.Timeout | undefined;
+    lightAutomationForced: boolean = false;
+    lightAutomationPreviousState:
+        | {
+            enabled: boolean;
+            mode: string;
+        }
+        | undefined;
 
     suppressOnPut = false;
 
@@ -50,6 +60,10 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
 
         await this.refreshSettings();
         await this.refreshSettings();
+
+        if (this.storageSettings.values.activateLightAutomation) {
+            await this.startMotionListener();
+        }
     }
 
     async updateMotionCapabilities() {
@@ -864,7 +878,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                                 this.storageSettings.values['osdDateTimeX'] = pos.x;
                                 this.storageSettings.values['osdDateTimeY'] = pos.y;
                                 await this.updateOSD({ dateTimeOverlay: { positionX: pos.x, positionY: pos.y } });
-                                
+
                                 // Update local cache
                                 if (this.osdCaps && this.osdCaps.dateTimeOverlay) {
                                     this.osdCaps.dateTimeOverlay.positionX = [String(pos.x)];
@@ -958,7 +972,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                                 this.storageSettings.values['osdChannelNameX'] = pos.x;
                                 this.storageSettings.values['osdChannelNameY'] = pos.y;
                                 await this.updateOSD({ channelNameOverlay: { positionX: pos.x, positionY: pos.y } });
-                                
+
                                 // Update local cache
                                 if (this.osdCaps && this.osdCaps.channelNameOverlay) {
                                     this.osdCaps.channelNameOverlay.positionX = [String(pos.x)];
@@ -1051,7 +1065,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                                     this.storageSettings.values[`osdText${id}X`] = pos.x;
                                     this.storageSettings.values[`osdText${id}Y`] = pos.y;
                                     await this.updateOSD({ textOverlays: [{ id, positionX: pos.x, positionY: pos.y }] });
-                                    
+
                                     // Update local cache
                                     if (this.osdCaps && this.osdCaps.textOverlayList) {
                                         const overlay = this.osdCaps.textOverlayList.find((t: any) => t.id?.[0] === id);
@@ -1354,6 +1368,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                 type: 'string',
                 choices: caps.brightnessControlOptions,
                 radioGroups: ['IR'],
+                immediate: true,
                 onPut: async (old: string, value: string) => {
                     if (old !== value && old !== undefined) {
                         await this.updateSupplementLight({ irBrightnessControl: value });
@@ -1374,6 +1389,37 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                         await this.updateSupplementLight({ irBrightness: value });
                     }
                 }
+            });
+        }
+
+        if (caps.cameraType?.[0] === 'smart-hybrid' && hasWhite) {
+            lightSettings.push({
+                key: 'activateLightAutomation',
+                title: 'Activate Light Automation',
+                description: 'If enabled, motion events will temporarily force the supplemental light to White mode',
+                subgroup: 'Light',
+                type: 'boolean',
+                immediate: true,
+                onPut: async (old: boolean, value: boolean) => {
+                    if (old !== value && old !== undefined) {
+                        if (value) {
+                            await this.startMotionListener();
+                        } else {
+                            await this.stopMotionListener(true);
+                        }
+                    }
+                }
+            });
+
+            lightSettings.push({
+                key: 'additionalLightOffDelay',
+                title: 'Additional Light Off Delay (seconds)',
+                description: 'Extra seconds to keep the light on after motion ends',
+                subgroup: 'Light',
+                type: 'number',
+                placeholder: '0',
+                range: [0, 3600],
+                immediate: false,
             });
         }
 
@@ -2050,7 +2096,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                 alarmTimes: params.playCount ?? current.alarmTimes,
             };
             await client.setAudioAlarmSettings(newSettings);
-            
+
             if (this.audioAlarmCaps) {
                 const audioType = this.audioAlarmCaps.audioTypes.find(type => type.id === newSettings.audioID);
                 this.storageSettings.values['audioAlarmSoundType'] = audioType ? audioType.description : String(newSettings.audioID);
@@ -2070,7 +2116,7 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
                 frequency: params.frequency ?? current.frequency,
             };
             await client.setWhiteLightAlarmSettings(newSettings);
-            
+
             this.storageSettings.values['whiteLightAlarmDuration'] = newSettings.durationTime;
             this.storageSettings.values['whiteLightAlarmFrequency'] = newSettings.frequency;
         }
@@ -2078,6 +2124,65 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
 
     async release() {
         this.killed = true;
+        await this.stopMotionListener(false);
+    }
+
+    private clearLightAutomationTimeout() {
+        if (this.lightAutomationOffTimeout) {
+            clearTimeout(this.lightAutomationOffTimeout);
+            this.lightAutomationOffTimeout = undefined;
+        }
+    }
+
+    private async restoreSupplementLightFromAutomation() {
+        this.clearLightAutomationTimeout();
+
+        if (!this.lightAutomationForced) {
+            return;
+        }
+
+        const previous = this.lightAutomationPreviousState;
+        this.lightAutomationForced = false;
+        this.lightAutomationPreviousState = undefined;
+
+        if (!previous) {
+            return;
+        }
+
+        try {
+            if (!previous.enabled) {
+                await this.updateSupplementLight({ enabled: false });
+                this.storageSettings.values['supplementLightEnabled'] = false;
+            } else {
+                await this.updateSupplementLight({ enabled: true, mode: previous.mode as any });
+                this.storageSettings.values['supplementLightEnabled'] = true;
+                this.storageSettings.values['supplementLightMode'] = previous.mode;
+            }
+        } catch (e) {
+            this.console.error('Failed restoring supplement light after automation', e);
+        }
+    }
+
+    async stopMotionListener(restoreLight: boolean) {
+        this.clearLightAutomationTimeout();
+
+        if (restoreLight) {
+            await this.restoreSupplementLightFromAutomation();
+        } else {
+            this.lightAutomationForced = false;
+            this.lightAutomationPreviousState = undefined;
+        }
+
+        this.motionListener = undefined;
+
+        try {
+            if (!this.motionListener) return;
+
+            this.motionListener.removeListener();
+            this.motionListener = undefined;
+        } catch (e) {
+            this.console.error('Error stopping motion listener', e);
+        }
     }
 
     async getDeviceProperties() {
@@ -2154,6 +2259,68 @@ export default class HikvisionUtilitiesMixin extends SettingsMixinDeviceBase<any
         this.setInfoSettingsValues();
         this.setSupplementLightSettingsValues();
         this.setAlarmSettingsValues();
+    }
+
+    async startMotionListener() {
+        if (this.motionListener) {
+            return;
+        }
+
+        this.motionListener = sdk.systemManager.listenDevice(this.id, {
+            event: ScryptedInterface.MotionSensor,
+        }, async (_, __, data) => {
+
+            if (this.killed)
+                return;
+
+            if (!this.storageSettings.values.activateLightAutomation)
+                return;
+
+            let isMotion: boolean;
+            if (typeof data === 'boolean') {
+                isMotion = data;
+            } else if (typeof data === 'string') {
+                isMotion = data === 'true';
+            } else if (data?.motion !== undefined) {
+                isMotion = !!data.motion;
+            } else if (data?.data !== undefined) {
+                isMotion = !!data.data;
+            } else {
+                isMotion = !!data;
+            }
+
+            if (isMotion) {
+                this.clearLightAutomationTimeout();
+
+                if (!this.lightAutomationForced) {
+                    const prevEnabled = !!this.storageSettings.values['supplementLightEnabled'];
+                    const prevMode = (this.storageSettings.values['supplementLightMode'] as string) || 'Smart';
+                    this.lightAutomationPreviousState = {
+                        enabled: prevEnabled,
+                        mode: prevMode,
+                    };
+                    this.lightAutomationForced = true;
+                }
+
+                try {
+                    await this.updateSupplementLight({ enabled: true, mode: 'White' });
+                    this.storageSettings.values['supplementLightEnabled'] = true;
+                    this.storageSettings.values['supplementLightMode'] = 'White';
+                } catch (e) {
+                    this.console.error('Failed enabling White supplemental light on motion', e);
+                }
+
+                return;
+            }
+
+            // Motion ended: restore after additional delay.
+            const delayMs = this.storageSettings.values.additionalLightOffDelay * 1000;
+            this.clearLightAutomationTimeout();
+            this.lightAutomationOffTimeout = setTimeout(() => {
+                void this.restoreSupplementLightFromAutomation();
+            }, delayMs);
+
+        });
     }
 
     async getMixinSettings(): Promise<Setting[]> {
