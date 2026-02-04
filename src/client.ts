@@ -1315,23 +1315,28 @@ export class HikvisionCameraAPI {
         const channelId = String(this.channel?.[0] ?? 1);
         const url = `http://${this.ip}/ISAPI/Image/channels/${channelId}/exposure`;
 
-        const payload =
-            `<?xml version="1.0" encoding="UTF-8"?>` +
-            `<Exposure>` +
-            `<ExposureType>manual</ExposureType>` +
-            `<OverexposeSuppress><enabled>${enabled ? 'true' : 'false'}</enabled></OverexposeSuppress>` +
-            `</Exposure>`;
-
-        const truncate = (s: any, max = 4000) => {
-            if (s === undefined || s === null)
-                return s;
-            const str = typeof s === 'string' ? s : String(s);
-            if (str.length <= max)
-                return str;
-            return str.slice(0, max) + `... (${str.length} chars)`;
-        };
-
         try {
+            // get the current exposure settings to preserve ExposureType
+            const getResponse = await this.request({
+                method: 'GET',
+                url,
+                responseType: 'text',
+                headers: {
+                    'Content-Type': 'application/xml',
+                },
+            });
+
+            const currentXml = (getResponse as any)?.body ?? '';
+            const exposureTypeMatch = currentXml.match(/<ExposureType>([^<]+)<\/ExposureType>/);
+            const currentExposureType = exposureTypeMatch?.[1] ?? 'auto';
+
+            const payload =
+                `<?xml version="1.0" encoding="UTF-8"?>` +
+                `<Exposure>` +
+                `<ExposureType>${currentExposureType}</ExposureType>` +
+                `<OverexposeSuppress><enabled>${enabled ? 'true' : 'false'}</enabled></OverexposeSuppress>` +
+                `</Exposure>`;
+
             const response = await this.request({
                 method: 'PUT',
                 url,
@@ -1343,7 +1348,6 @@ export class HikvisionCameraAPI {
             });
 
             const status = (response as any)?.statusCode ?? (response as any)?.status ?? 'unknown';
-            const body = (response as any)?.body;
 
             if (typeof status === 'number' && status >= 400) {
                 this.console.warn('[SmartSupplementLight] Non success HTTP status:', status);
